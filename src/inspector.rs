@@ -95,11 +95,7 @@ pub fn fields<'a>(schema: &'a ConfigSchema, config: &'a Value) -> Vec<InspectorF
         .map(|def| {
             let key = &def.meta().key;
             let current_value = object.and_then(|o| o.get(key));
-            let field_issues = issues
-                .iter()
-                .filter(|i| i.key == *key)
-                .cloned()
-                .collect();
+            let field_issues = issues.iter().filter(|i| i.key == *key).cloned().collect();
             InspectorField {
                 definition: def,
                 current_value,

@@ -165,9 +165,9 @@ impl<'a> ThemeResolver<'a> {
     }
 
     pub fn node_body_stroke(&self) -> Color {
-        self.overrides.node_body_stroke.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Border, Color::rgb(0.25, 0.27, 0.32))
-        })
+        self.overrides
+            .node_body_stroke
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Border, Color::rgb(0.25, 0.27, 0.32)))
     }
 
     /// Body fill for subgraph navigation nodes (Diamond chrome). Tinted
@@ -263,9 +263,9 @@ impl<'a> ThemeResolver<'a> {
     }
 
     pub fn node_selected_outline(&self) -> Color {
-        self.overrides.node_selected_outline.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00))
-        })
+        self.overrides
+            .node_selected_outline
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00)))
     }
 
     pub fn node_corner_radius(&self) -> f32 {
@@ -299,15 +299,15 @@ impl<'a> ThemeResolver<'a> {
     }
 
     pub fn port_stroke(&self) -> Color {
-        self.overrides.port_stroke.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Border, Color::rgb(0.30, 0.32, 0.38))
-        })
+        self.overrides
+            .port_stroke
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Border, Color::rgb(0.30, 0.32, 0.38)))
     }
 
     pub fn port_hover_outline(&self) -> Color {
-        self.overrides.port_hover_outline.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00))
-        })
+        self.overrides
+            .port_hover_outline
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00)))
     }
 
     pub fn port_compatible_outline(&self) -> Color {
@@ -357,27 +357,27 @@ impl<'a> ThemeResolver<'a> {
     }
 
     pub fn edge_success_color(&self) -> Color {
-        self.overrides.edge_success_color.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Success, Color::rgb(0.30, 0.85, 0.40))
-        })
+        self.overrides
+            .edge_success_color
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Success, Color::rgb(0.30, 0.85, 0.40)))
     }
 
     pub fn edge_warning_color(&self) -> Color {
-        self.overrides.edge_warning_color.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Warning, Color::rgb(0.95, 0.70, 0.20))
-        })
+        self.overrides
+            .edge_warning_color
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Warning, Color::rgb(0.95, 0.70, 0.20)))
     }
 
     pub fn edge_error_color(&self) -> Color {
-        self.overrides.edge_error_color.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Error, Color::rgb(0.90, 0.30, 0.30))
-        })
+        self.overrides
+            .edge_error_color
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Error, Color::rgb(0.90, 0.30, 0.30)))
     }
 
     pub fn edge_drag_preview_color(&self) -> Color {
-        self.overrides.edge_drag_preview_color.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00))
-        })
+        self.overrides
+            .edge_drag_preview_color
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00)))
     }
 
     pub fn edge_invalid_drag_color(&self) -> Color {
@@ -387,9 +387,9 @@ impl<'a> ThemeResolver<'a> {
     }
 
     pub fn edge_selected_outline(&self) -> Color {
-        self.overrides.edge_selected_outline.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00))
-        })
+        self.overrides
+            .edge_selected_outline
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00)))
     }
 
     pub fn edge_thickness(&self) -> f32 {
@@ -397,9 +397,9 @@ impl<'a> ThemeResolver<'a> {
     }
 
     pub fn edge_delete_button_fill(&self) -> Color {
-        self.overrides.edge_delete_button_fill.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Error, Color::rgb(0.85, 0.30, 0.30))
-        })
+        self.overrides
+            .edge_delete_button_fill
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Error, Color::rgb(0.85, 0.30, 0.30)))
     }
 
     pub fn edge_delete_button_glyph(&self) -> Color {
@@ -466,7 +466,10 @@ impl<'a> ThemeResolver<'a> {
 
     pub fn group_border(&self) -> Color {
         self.overrides.group_border.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::BorderSecondary, Color::rgba(0.60, 0.62, 0.68, 0.45))
+            Self::theme_color(
+                ColorToken::BorderSecondary,
+                Color::rgba(0.60, 0.62, 0.68, 0.45),
+            )
         })
     }
 
@@ -475,9 +478,9 @@ impl<'a> ThemeResolver<'a> {
     /// renderer swaps `group_border()` for this on the live
     /// add-target group.
     pub fn group_add_target_border(&self) -> Color {
-        self.overrides.group_add_target_border.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00))
-        })
+        self.overrides
+            .group_add_target_border
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00)))
     }
 
     /// Border tint used while a Shift-drag would REMOVE the
@@ -485,9 +488,9 @@ impl<'a> ThemeResolver<'a> {
     /// from `Error` so the user reads it as "leaving" not
     /// "broken".
     pub fn group_remove_target_border(&self) -> Color {
-        self.overrides.group_remove_target_border.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Warning, Color::rgb(0.95, 0.65, 0.30))
-        })
+        self.overrides
+            .group_remove_target_border
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Warning, Color::rgb(0.95, 0.65, 0.30)))
     }
 
     /// Group header reads as a band one tier above the group body —
@@ -541,9 +544,9 @@ impl<'a> ThemeResolver<'a> {
     // ─── Boundary (exposed-port) chrome ─────────────────────────────
 
     pub fn boundary_port_color(&self) -> Color {
-        self.overrides.boundary_port_color.unwrap_or_else(|| {
-            Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00))
-        })
+        self.overrides
+            .boundary_port_color
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00)))
     }
 
     pub fn boundary_port_unconnected_color(&self) -> Color {
@@ -623,7 +626,13 @@ impl<'a> ThemeResolver<'a> {
     /// alpha tuned for both schemes.
     pub fn port_shadow(&self) -> blinc_core::Shadow {
         let alpha = ThemeState::try_get()
-            .map(|s| s.shadows().get(ShadowToken::Sm).first().map(|sh| sh.color.a).unwrap_or(0.35))
+            .map(|s| {
+                s.shadows()
+                    .get(ShadowToken::Sm)
+                    .first()
+                    .map(|sh| sh.color.a)
+                    .unwrap_or(0.35)
+            })
             .unwrap_or(0.35);
         blinc_core::Shadow {
             offset_x: 0.0,

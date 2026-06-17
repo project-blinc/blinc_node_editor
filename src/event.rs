@@ -385,7 +385,10 @@ pub enum EditorCommand<K: PortKind, N, C, G> {
     FocusOnNode(NodeId),
     ZoomToFit,
     ZoomToSelection,
-    SetViewport { zoom: f32, pan: Point },
+    SetViewport {
+        zoom: f32,
+        pan: Point,
+    },
 
     // ── Runtime observability ───────────────────────────────────────
     SetNodeBadge(NodeId, Option<StatusBadge>),

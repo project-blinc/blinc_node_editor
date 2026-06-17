@@ -227,8 +227,7 @@ pub fn group_inputs_from<G>(
     width: f32,
     theme: &ThemeResolver<'_>,
 ) -> GroupSlotInputs {
-    let has_description = group.description.is_some()
-        || group.description_placeholder.is_some();
+    let has_description = group.description.is_some() || group.description_placeholder.is_some();
     // Estimate the description's wrapped line count up front so the
     // description slot's height grows to fit. Uses the same
     // per-class advance estimator + greedy wrap as
@@ -692,7 +691,11 @@ pub fn warm_node_slot_cache(
     // read lock.
     let uncached: Vec<NodeFingerprint> = {
         let cache_r = cache.read().unwrap();
-        wanted.iter().copied().filter(|fp| !cache_r.contains_key(fp)).collect()
+        wanted
+            .iter()
+            .copied()
+            .filter(|fp| !cache_r.contains_key(fp))
+            .collect()
     };
     if uncached.is_empty() {
         return 0;
@@ -700,7 +703,10 @@ pub fn warm_node_slot_cache(
 
     // Phase B — compute, serial or parallel.
     let computed: Vec<(NodeFingerprint, NodeSlots)> = if uncached.len() < PARALLEL_THRESHOLD {
-        uncached.into_iter().map(|fp| (fp, compute_node_slots(&input_for(fp)))).collect()
+        uncached
+            .into_iter()
+            .map(|fp| (fp, compute_node_slots(&input_for(fp))))
+            .collect()
     } else {
         uncached
             .into_par_iter()
@@ -724,7 +730,11 @@ pub fn warm_group_slot_cache(
 ) -> usize {
     let uncached: Vec<GroupFingerprint> = {
         let cache_r = cache.read().unwrap();
-        wanted.iter().copied().filter(|fp| !cache_r.contains_key(fp)).collect()
+        wanted
+            .iter()
+            .copied()
+            .filter(|fp| !cache_r.contains_key(fp))
+            .collect()
     };
     if uncached.is_empty() {
         return 0;
@@ -793,7 +803,10 @@ mod tests {
         assert!(slots.icon.is_some());
         // Title sits inside the header.
         assert!(slots.title.y() >= slots.header.y());
-        assert!(slots.title.y() + slots.title.height() <= slots.header.y() + slots.header.height() + 0.5);
+        assert!(
+            slots.title.y() + slots.title.height()
+                <= slots.header.y() + slots.header.height() + 0.5
+        );
         // Total height tracks the icon row: 10 pad + 36 icon + 10 pad.
         assert!(slots.total_height >= 56.0);
     }
@@ -814,8 +827,11 @@ mod tests {
         };
         let slots = compute_node_slots(&inputs);
         // 10 + 36 + 10 = 56
-        assert!(slots.total_height >= 55.0 && slots.total_height <= 57.0,
-            "expected ~56, got {}", slots.total_height);
+        assert!(
+            slots.total_height >= 55.0 && slots.total_height <= 57.0,
+            "expected ~56, got {}",
+            slots.total_height
+        );
     }
 
     #[test]

@@ -450,11 +450,7 @@ mod tests {
     #[test]
     fn push_and_undo_returns_label() {
         let mut h: Hist = History::with_default_cap();
-        h.push(
-            move_to("a", 10.0, 0.0),
-            move_to("a", 0.0, 0.0),
-            "Move Node",
-        );
+        h.push(move_to("a", 10.0, 0.0), move_to("a", 0.0, 0.0), "Move Node");
         assert!(h.can_undo());
         assert!(!h.can_redo());
         assert_eq!(h.next_undo_label(), Some("Move Node"));
@@ -503,11 +499,7 @@ mod tests {
     fn cap_drops_oldest() {
         let mut h: Hist = History::new(3);
         for i in 0..5 {
-            h.push(
-                move_to("a", i as f32, 0.0),
-                move_to("a", 0.0, 0.0),
-                "Move",
-            );
+            h.push(move_to("a", i as f32, 0.0), move_to("a", 0.0, 0.0), "Move");
         }
         assert_eq!(h.len(), 3);
     }
@@ -568,5 +560,4 @@ mod tests {
         // drags into one — final count is 2 (Transaction + one Move).
         assert_eq!(h.len(), 2);
     }
-
 }

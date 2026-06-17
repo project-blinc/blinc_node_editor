@@ -23,13 +23,29 @@ use std::sync::Arc;
 pub struct NodeId(pub Arc<str>);
 
 impl NodeId {
-    pub fn new(id: impl Into<Arc<str>>) -> Self { Self(id.into()) }
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn new(id: impl Into<Arc<str>>) -> Self {
+        Self(id.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-impl From<&str> for NodeId    { fn from(s: &str)    -> Self { Self(Arc::from(s)) } }
-impl From<String> for NodeId  { fn from(s: String)  -> Self { Self(Arc::from(s)) } }
-impl From<Arc<str>> for NodeId { fn from(s: Arc<str>) -> Self { Self(s) } }
+impl From<&str> for NodeId {
+    fn from(s: &str) -> Self {
+        Self(Arc::from(s))
+    }
+}
+impl From<String> for NodeId {
+    fn from(s: String) -> Self {
+        Self(Arc::from(s))
+    }
+}
+impl From<Arc<str>> for NodeId {
+    fn from(s: Arc<str>) -> Self {
+        Self(s)
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // NodeTemplate — declarative component description
@@ -238,10 +254,7 @@ impl<K: PortKind> NodeTemplate<K> {
     /// Append a single property to the schema. Convenience for
     /// builder chains that prefer one-property-per-line over
     /// constructing the whole `ConfigSchema` up front.
-    pub fn with_property(
-        mut self,
-        property: impl Into<crate::config::PropertyDefinition>,
-    ) -> Self {
+    pub fn with_property(mut self, property: impl Into<crate::config::PropertyDefinition>) -> Self {
         self.config_schema.properties.push(property.into());
         self
     }
@@ -409,10 +422,7 @@ impl<M> NodeInstance<M> {
     /// shape and the editor emits
     /// [`crate::event::EditorEvent::SubgraphRequested`] on
     /// double-click.
-    pub fn with_subgraph_ref(
-        mut self,
-        sub: impl Into<crate::subgraph::SubgraphId>,
-    ) -> Self {
+    pub fn with_subgraph_ref(mut self, sub: impl Into<crate::subgraph::SubgraphId>) -> Self {
         self.subgraph_ref = Some(sub.into());
         self
     }

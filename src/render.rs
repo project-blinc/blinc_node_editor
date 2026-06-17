@@ -42,7 +42,10 @@ use crate::theme::ThemeResolver;
 // through to `n = 1.0` round arcs — no visible change.
 
 fn max_corner(cr: CornerRadius) -> f32 {
-    cr.top_left.max(cr.top_right).max(cr.bottom_right).max(cr.bottom_left)
+    cr.top_left
+        .max(cr.top_right)
+        .max(cr.bottom_right)
+        .max(cr.bottom_left)
 }
 
 fn themed_fill_rect(
@@ -109,7 +112,12 @@ pub fn node_bounds<M>(
 ) -> Rect {
     let (default_w, _) = theme.default_node_size();
     let w = instance.size.map(|(w, _)| w).unwrap_or(default_w);
-    Rect::new(instance.position.x, instance.position.y, w, slots.total_height)
+    Rect::new(
+        instance.position.x,
+        instance.position.y,
+        w,
+        slots.total_height,
+    )
 }
 
 /// Compute the centre point of a port on a node.
@@ -142,9 +150,10 @@ pub fn port_position_on_node(
         // the header doesn't displace them since they're on the
         // perpendicular axis.
         PortPosition::Top => Point::new(bounds.x() + bounds.width() * slot, bounds.y()),
-        PortPosition::Bottom => {
-            Point::new(bounds.x() + bounds.width() * slot, bounds.y() + bounds.height())
-        }
+        PortPosition::Bottom => Point::new(
+            bounds.x() + bounds.width() * slot,
+            bounds.y() + bounds.height(),
+        ),
     }
 }
 
@@ -182,7 +191,10 @@ pub struct ContentSlotRects {
 /// Compute [`ContentSlotRects`] from the node's outer bounds + slot
 /// table. Returns `None` when the node has no content slot
 /// (`slots.body.height() == 0`).
-pub fn content_slot_rects(bounds: Rect, slots: &crate::slot::NodeSlots) -> Option<ContentSlotRects> {
+pub fn content_slot_rects(
+    bounds: Rect,
+    slots: &crate::slot::NodeSlots,
+) -> Option<ContentSlotRects> {
     if slots.body.height() <= 0.0 {
         return None;
     }
@@ -251,19 +263,25 @@ pub fn iter_port_positions<'a, K: PortKind, M>(
         by_side[bucket(desc.resolved_position())].push((Direction::Output, desc));
     }
 
-    by_side.into_iter().enumerate().flat_map(move |(side_idx, entries)| {
-        let position = match side_idx {
-            0 => PortPosition::Top,
-            1 => PortPosition::Right,
-            2 => PortPosition::Bottom,
-            _ => PortPosition::Left,
-        };
-        let total = entries.len();
-        entries.into_iter().enumerate().map(move |(i, (dir, desc))| {
-            let pt = port_position_on_node(bounds, body, position, i, total);
-            (dir, desc, pt)
+    by_side
+        .into_iter()
+        .enumerate()
+        .flat_map(move |(side_idx, entries)| {
+            let position = match side_idx {
+                0 => PortPosition::Top,
+                1 => PortPosition::Right,
+                2 => PortPosition::Bottom,
+                _ => PortPosition::Left,
+            };
+            let total = entries.len();
+            entries
+                .into_iter()
+                .enumerate()
+                .map(move |(i, (dir, desc))| {
+                    let pt = port_position_on_node(bounds, body, position, i, total);
+                    (dir, desc, pt)
+                })
         })
-    })
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -272,7 +290,12 @@ pub fn iter_port_positions<'a, K: PortKind, M>(
 
 /// Translate a node-local rect by the node's outer origin.
 fn translate_rect(rect: Rect, origin: Point) -> Rect {
-    Rect::new(rect.x() + origin.x, rect.y() + origin.y, rect.width(), rect.height())
+    Rect::new(
+        rect.x() + origin.x,
+        rect.y() + origin.y,
+        rect.width(),
+        rect.height(),
+    )
 }
 
 /// Draw a node body — background + header + title + subtitle +
@@ -392,7 +415,10 @@ pub fn draw_node_at<K: PortKind, M>(
     // visually. Custom collapses to Rectangle.
     match shape {
         NodeShape::Circle => {
-            let centre = Point::new(bounds.x() + bounds.width() * 0.5, bounds.y() + bounds.height() * 0.5);
+            let centre = Point::new(
+                bounds.x() + bounds.width() * 0.5,
+                bounds.y() + bounds.height() * 0.5,
+            );
             let r = bounds.width().min(bounds.height()) * 0.5;
             ctx.fill_circle(centre, r, Brush::Solid(body_fill));
         }
@@ -422,7 +448,13 @@ pub fn draw_node_at<K: PortKind, M>(
         if let Some(slot) = content_slot_rects(bounds, slots) {
             let inset_fill = darken(theme.node_body_fill(), 0.20);
             let inset_radius = CornerRadius::uniform(radius * 0.7);
-            themed_fill_rect(ctx, slot.inset, inset_radius, Brush::Solid(inset_fill), theme);
+            themed_fill_rect(
+                ctx,
+                slot.inset,
+                inset_radius,
+                Brush::Solid(inset_fill),
+                theme,
+            );
         }
     }
 
@@ -472,11 +504,7 @@ pub fn draw_node_at<K: PortKind, M>(
             .with_weight(FontWeight::Medium)
             .with_align(TextAlign::Center)
             .with_baseline(TextBaseline::Middle);
-        ctx.draw_text(
-            title_text,
-            Point::new(centre_x, centre_y),
-            &title_style,
-        );
+        ctx.draw_text(title_text, Point::new(centre_x, centre_y), &title_style);
         if let Some(sub) = subtitle_text {
             // Subtitle drawn below the shape, horizontally centred
             // against the bounds rect. Top-baseline so the text
@@ -486,11 +514,7 @@ pub fn draw_node_at<K: PortKind, M>(
                 .with_color(theme.node_subtitle_color())
                 .with_align(TextAlign::Center)
                 .with_baseline(TextBaseline::Top);
-            ctx.draw_text(
-                sub,
-                Point::new(centre_x, subtitle_anchor_y),
-                &sub_style,
-            );
+            ctx.draw_text(sub, Point::new(centre_x, subtitle_anchor_y), &sub_style);
         }
     }
 
@@ -534,14 +558,7 @@ pub fn draw_node_at<K: PortKind, M>(
             ctx.stroke_circle(centre, r, &outline_stroke, outline_brush);
         }
         NodeShape::Rectangle | NodeShape::Custom => {
-            themed_stroke_rect(
-                ctx,
-                bounds,
-                cr_body,
-                &outline_stroke,
-                outline_brush,
-                theme,
-            );
+            themed_stroke_rect(ctx, bounds, cr_body, &outline_stroke, outline_brush, theme);
         }
     }
 
@@ -829,8 +846,7 @@ pub fn draw_port_tooltip_clamped<K: PortKind>(
     let content_w = title_w.max(desc_w);
     let desc_line_h = desc_size + 2.0;
     let content_h = if !desc_lines.is_empty() {
-        title_size + line_gap + desc_lines.len() as f32 * desc_line_h
-            - (desc_line_h - desc_size)
+        title_size + line_gap + desc_lines.len() as f32 * desc_line_h - (desc_line_h - desc_size)
     } else {
         title_size
     };
@@ -1005,7 +1021,9 @@ pub fn draw_edge<M>(
     hovered: bool,
     time_secs: f32,
 ) {
-    draw_edge_with_state(ctx, conn.state, from, to, theme, selected, hovered, time_secs);
+    draw_edge_with_state(
+        ctx, conn.state, from, to, theme, selected, hovered, time_secs,
+    );
 }
 
 /// Same as [`draw_edge`] but accepts the `ConnectionState` explicitly.
@@ -1097,7 +1115,12 @@ pub fn draw_edge_delete_button(
     theme: &ThemeResolver<'_>,
 ) -> Rect {
     let radius = theme.edge_delete_button_radius();
-    let rect = Rect::new(centre.x - radius, centre.y - radius, radius * 2.0, radius * 2.0);
+    let rect = Rect::new(
+        centre.x - radius,
+        centre.y - radius,
+        radius * 2.0,
+        radius * 2.0,
+    );
 
     // Filled circle background.
     let fill = Brush::Solid(theme.edge_delete_button_fill());
@@ -1310,9 +1333,7 @@ pub fn draw_group<G>(
     // specific accent (the subgraph-expansion container, "warning"
     // groups in observability dashboards, etc.) without affecting
     // the body fill or member nodes.
-    let header_fill_color = group
-        .accent
-        .unwrap_or_else(|| theme.group_header_fill());
+    let header_fill_color = group.accent.unwrap_or_else(|| theme.group_header_fill());
     themed_fill_rect(
         ctx,
         header,
@@ -1369,7 +1390,11 @@ pub fn draw_group<G>(
         .with_weight(FontWeight::Medium)
         .with_align(TextAlign::Left)
         .with_baseline(TextBaseline::Top);
-    ctx.draw_text(&group.name, Point::new(title_rect.x(), title_rect.y()), &title_style);
+    ctx.draw_text(
+        &group.name,
+        Point::new(title_rect.x(), title_rect.y()),
+        &title_style,
+    );
 
     // Description — kept visible in collapsed mode too so the
     // chip still reads as informative when the members are folded
@@ -1380,10 +1405,7 @@ pub fn draw_group<G>(
     // is set, the placeholder paints in a dimmer colour as a hint.
     if let Some(desc_slot) = slots.description {
         let desc_rect = translate_rect(desc_slot, origin);
-        let desc_text = group
-            .description
-            .as_deref()
-            .filter(|s| !s.is_empty());
+        let desc_text = group.description.as_deref().filter(|s| !s.is_empty());
         let (label, color) = match desc_text {
             Some(text) => (text, subtitle_color),
             None => match group.description_placeholder.as_deref() {
@@ -1538,8 +1560,7 @@ fn draw_chrome_button_outline_color(ctx: &mut dyn DrawContext, rect: Rect, color
 /// Authored in the canonical Tabler form; if we ever take a direct
 /// dep on `blinc_tabler_icons` we can replace these with the
 /// generated path constants verbatim.
-const TABLER_PENCIL: &str =
-    r#"<path d="M4 20h4l10.5 -10.5a1.5 1.5 0 0 0 -4 -4l-10.5 10.5v4" /><line x1="13.5" y1="6.5" x2="17.5" y2="10.5" />"#;
+const TABLER_PENCIL: &str = r#"<path d="M4 20h4l10.5 -10.5a1.5 1.5 0 0 0 -4 -4l-10.5 10.5v4" /><line x1="13.5" y1="6.5" x2="17.5" y2="10.5" />"#;
 const TABLER_X: &str =
     r#"<line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />"#;
 const TABLER_CHEVRON_UP: &str = r#"<polyline points="6 15 12 9 18 15" />"#;
@@ -1596,11 +1617,13 @@ fn chrome_glyph_doc(glyph: ChromeGlyph, stroke: Color) -> Arc<blinc_svg::SvgDocu
     }
     let svg = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgb({},{},{})" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{}</svg>"#,
-        rgb[0], rgb[1], rgb[2], glyph.path()
+        rgb[0],
+        rgb[1],
+        rgb[2],
+        glyph.path()
     );
     let doc = Arc::new(
-        blinc_svg::SvgDocument::from_str(&svg)
-            .expect("embedded tabler markup is well-formed"),
+        blinc_svg::SvgDocument::from_str(&svg).expect("embedded tabler markup is well-formed"),
     );
     cache.lock().unwrap().insert(key, doc.clone());
     doc
@@ -1770,7 +1793,13 @@ pub fn draw_badge(
     let colour = theme.badge_color(badge.kind);
     let radius = (chip_rect.height() * 0.5).min(chip_rect.width() * 0.5);
 
-    themed_fill_rect(ctx, chip_rect, CornerRadius::uniform(radius), Brush::Solid(colour), theme);
+    themed_fill_rect(
+        ctx,
+        chip_rect,
+        CornerRadius::uniform(radius),
+        Brush::Solid(colour),
+        theme,
+    );
 
     if let Some(count) = badge.count {
         let label = if count > 99 {

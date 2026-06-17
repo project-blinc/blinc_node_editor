@@ -96,12 +96,18 @@ pub enum Direction {
 }
 
 impl Direction {
-    pub fn is_input(self) -> bool { matches!(self, Self::Input) }
-    pub fn is_output(self) -> bool { matches!(self, Self::Output) }
-    pub fn flip(self) -> Self { match self {
-        Self::Input => Self::Output,
-        Self::Output => Self::Input,
-    } }
+    pub fn is_input(self) -> bool {
+        matches!(self, Self::Input)
+    }
+    pub fn is_output(self) -> bool {
+        matches!(self, Self::Output)
+    }
+    pub fn flip(self) -> Self {
+        match self {
+            Self::Input => Self::Output,
+            Self::Output => Self::Input,
+        }
+    }
 
     /// Default geometric placement: input → left, output → right.
     /// Zeal supports all 4 sides; nodes that want top/bottom ports
@@ -134,13 +140,29 @@ pub enum PortPosition {
 pub struct PortId(pub Arc<str>);
 
 impl PortId {
-    pub fn new(id: impl Into<Arc<str>>) -> Self { Self(id.into()) }
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn new(id: impl Into<Arc<str>>) -> Self {
+        Self(id.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-impl From<&str> for PortId    { fn from(s: &str)    -> Self { Self(Arc::from(s)) } }
-impl From<String> for PortId  { fn from(s: String)  -> Self { Self(Arc::from(s)) } }
-impl From<Arc<str>> for PortId { fn from(s: Arc<str>) -> Self { Self(s) } }
+impl From<&str> for PortId {
+    fn from(s: &str) -> Self {
+        Self(Arc::from(s))
+    }
+}
+impl From<String> for PortId {
+    fn from(s: String) -> Self {
+        Self(Arc::from(s))
+    }
+}
+impl From<Arc<str>> for PortId {
+    fn from(s: Arc<str>) -> Self {
+        Self(s)
+    }
+}
 
 /// A port's full address — node + port. Used in [`Connection`](crate::Connection)
 /// endpoints and in drag-to-connect events.
@@ -152,7 +174,10 @@ pub struct PortAddress {
 
 impl PortAddress {
     pub fn new(node: crate::node::NodeId, port: impl Into<PortId>) -> Self {
-        Self { node, port: port.into() }
+        Self {
+            node,
+            port: port.into(),
+        }
     }
 }
 
@@ -191,7 +216,12 @@ pub struct PortDesc<K: PortKind> {
 impl<K: PortKind> PortDesc<K> {
     /// Convenience constructor for the common case (no extra metadata,
     /// default position derived from direction).
-    pub fn new(id: impl Into<PortId>, name: impl Into<String>, direction: Direction, kind: K) -> Self {
+    pub fn new(
+        id: impl Into<PortId>,
+        name: impl Into<String>,
+        direction: Direction,
+        kind: K,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -206,7 +236,8 @@ impl<K: PortKind> PortDesc<K> {
     /// Resolved position — explicit if set, otherwise derived from
     /// direction.
     pub fn resolved_position(&self) -> PortPosition {
-        self.position.unwrap_or_else(|| self.direction.default_position())
+        self.position
+            .unwrap_or_else(|| self.direction.default_position())
     }
 
     pub fn with_position(mut self, position: PortPosition) -> Self {

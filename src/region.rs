@@ -397,7 +397,11 @@ mod tests {
             RegionId::GroupEdit(gid.clone()),
             RegionId::GroupTitle(gid.clone()),
         ] {
-            assert_eq!(r.as_group(), Some(&gid), "expected group accessor for {r:?}");
+            assert_eq!(
+                r.as_group(),
+                Some(&gid),
+                "expected group accessor for {r:?}"
+            );
         }
         assert!(RegionId::Node(n("n0")).as_group().is_none());
     }

@@ -73,7 +73,7 @@ pub mod theme;
 // ── Top-level re-exports ───────────────────────────────────────────
 
 pub use connection::{
-    Connection, ConnectionEvent, ConnectionId, ConnectionState, ConnectRequest, ValidationOutcome,
+    ConnectRequest, Connection, ConnectionEvent, ConnectionId, ConnectionState, ValidationOutcome,
 };
 pub use editor::{NodeEditor, RenderStats, SearchHit};
 pub use event::{
@@ -115,13 +115,8 @@ pub mod prelude {
         PropertyDefinition, PropertyEffect, PropertyMeta, PropertyRule, SelectOption,
         SelectProperty, TextProperty, TextareaProperty, ValidationIssue,
     };
-    pub use crate::inspector::{apply_patch, fields, InspectorField, InspectorPatchRequest};
-    /// Re-export of [`serde_json::Value`] so hosts that don't carry a
-    /// direct `serde_json` dependency can still construct
-    /// [`PropertyRule`] effects + predicates.
-    pub use serde_json::{Map as JsonMap, Value as JsonValue};
     pub use crate::connection::{
-        Connection, ConnectionEvent, ConnectionState, ConnectRequest, ValidationOutcome,
+        ConnectRequest, Connection, ConnectionEvent, ConnectionState, ValidationOutcome,
     };
     pub use crate::editor::{NodeEditor, SearchHit};
     pub use crate::event::{
@@ -131,10 +126,15 @@ pub mod prelude {
     pub use crate::group::{BadgeKind, Group, GroupId, StatusBadge};
     pub use crate::history::{CoalesceKey, History};
     pub use crate::icon::NodeIcon;
+    pub use crate::inspector::{apply_patch, fields, InspectorField, InspectorPatchRequest};
     pub use crate::layout::LayoutStrategy;
     pub use crate::node::{NodeId, NodeInstance, NodeShape, NodeTemplate};
     pub use crate::port::{Direction, PortAddress, PortDesc, PortId, PortKind, PortPosition};
     pub use crate::region::RegionId;
     pub use crate::subgraph::{Subgraph, SubgraphId};
     pub use crate::theme::NodeEditorTheme;
+    /// Re-export of [`serde_json::Value`] so hosts that don't carry a
+    /// direct `serde_json` dependency can still construct
+    /// [`PropertyRule`] effects + predicates.
+    pub use serde_json::{Map as JsonMap, Value as JsonValue};
 }

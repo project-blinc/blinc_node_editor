@@ -6,7 +6,9 @@
 //! `CanvasKit`).
 
 use crate::connection::ValidationOutcome;
-use crate::group::{AddToGroupRequest, CreateGroupRequest, GroupId, RemoveFromGroupRequest, RemoveSource};
+use crate::group::{
+    AddToGroupRequest, CreateGroupRequest, GroupId, RemoveFromGroupRequest, RemoveSource,
+};
 use crate::node::NodeId;
 use crate::port::PortAddress;
 use blinc_core::layer::Point;
@@ -35,10 +37,7 @@ pub enum DragConnect {
     Idle,
     /// Pointer is dragging from an output port; not currently over a
     /// candidate input.
-    Dragging {
-        from: PortAddress,
-        cursor: Point,
-    },
+    Dragging { from: PortAddress, cursor: Point },
     /// Pointer is over a candidate input port; validation has been
     /// run.
     Hovering {
@@ -224,10 +223,7 @@ pub fn classify_drag_membership_change(
             node,
             source: RemoveSource::DraggedOut,
         })),
-        (None, Some(next)) => Some(Add(AddToGroupRequest {
-            group: next,
-            node,
-        })),
+        (None, Some(next)) => Some(Add(AddToGroupRequest { group: next, node })),
         (Some(prev), Some(_next)) => {
             // Moved from prev → next; emit a remove-from-prev. The
             // caller follows up with an add-to-next on the same drag-end

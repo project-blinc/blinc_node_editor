@@ -178,7 +178,10 @@ pub enum PropertyDefinition {
     /// the field should NOT be auto-seeded, or use a different
     /// variant if you need separate "schema example" + "default
     /// value" semantics.
-    Custom { meta: PropertyMeta, value: Value },
+    Custom {
+        meta: PropertyMeta,
+        value: Value,
+    },
 }
 
 impl PropertyDefinition {
@@ -849,10 +852,7 @@ pub fn validate(schema: &ConfigSchema, config: &Value) -> Vec<ValidationIssue> {
                     if !s.options.iter().any(|o| o.value == text) {
                         issues.push(ValidationIssue {
                             key: meta.key.clone(),
-                            message: format!(
-                                "`{}` has unknown value `{}`",
-                                meta.label, text
-                            ),
+                            message: format!("`{}` has unknown value `{}`", meta.label, text),
                             severity: IssueSeverity::Error,
                         });
                     }
@@ -894,11 +894,20 @@ pub enum Predicate {
     /// should fire on every cascade pass without a value test.
     Always,
     /// `config[key] == value`.
-    Eq { key: String, value: Value },
+    Eq {
+        key: String,
+        value: Value,
+    },
     /// `config[key] != value`.
-    NotEq { key: String, value: Value },
+    NotEq {
+        key: String,
+        value: Value,
+    },
     /// `config[key]` is in `values`.
-    In { key: String, values: Vec<Value> },
+    In {
+        key: String,
+        values: Vec<Value>,
+    },
     /// JSON-truthy: present, not null, not `false`, not `""`, not
     /// `0`, not empty array, not empty object.
     Truthy(String),
@@ -906,10 +915,22 @@ pub enum Predicate {
     /// `null`). Distinct from `Truthy` — useful for "user has
     /// touched this field" semantics.
     Exists(String),
-    Gt { key: String, value: f64 },
-    Lt { key: String, value: f64 },
-    Gte { key: String, value: f64 },
-    Lte { key: String, value: f64 },
+    Gt {
+        key: String,
+        value: f64,
+    },
+    Lt {
+        key: String,
+        value: f64,
+    },
+    Gte {
+        key: String,
+        value: f64,
+    },
+    Lte {
+        key: String,
+        value: f64,
+    },
     /// All sub-predicates match. Empty `Vec` returns `true`.
     All(Vec<Predicate>),
     /// Any sub-predicate matches. Empty `Vec` returns `false`.
@@ -1165,8 +1186,8 @@ pub fn cascade_rules(
     while !frontier.is_empty() && depth < MAX_RULE_CASCADE_DEPTH {
         let mut next_frontier: Vec<String> = Vec::new();
         for rule in rules {
-            let triggered = rule.triggers.is_empty()
-                || rule.triggers.iter().any(|t| frontier.contains(t));
+            let triggered =
+                rule.triggers.is_empty() || rule.triggers.iter().any(|t| frontier.contains(t));
             if !triggered {
                 continue;
             }
@@ -1243,7 +1264,9 @@ mod tests {
 
     #[test]
     fn required_field_with_no_value_is_error() {
-        let s = schema(vec![TextProperty::new("name", "Name").required(true).into()]);
+        let s = schema(vec![TextProperty::new("name", "Name")
+            .required(true)
+            .into()]);
 
         let issues = validate(&s, &Value::Object(Map::new()));
         assert_eq!(issues.len(), 1);
@@ -1374,8 +1397,14 @@ mod tests {
             value: serde_json::json!(3.0),
         };
         assert!(eq_int.evaluate(&int_cfg));
-        assert!(eq_int.evaluate(&float_cfg), "int predicate matches float value");
-        assert!(eq_float.evaluate(&int_cfg), "float predicate matches int value");
+        assert!(
+            eq_int.evaluate(&float_cfg),
+            "int predicate matches float value"
+        );
+        assert!(
+            eq_float.evaluate(&int_cfg),
+            "float predicate matches int value"
+        );
         assert!(eq_float.evaluate(&float_cfg));
 
         // NotEq follows the same bridge.
@@ -1453,10 +1482,7 @@ mod tests {
         let mut config = serde_json::json!({ "mode": "lenient", "threshold": 0.5 });
         let applied = cascade_rules(&rules, &mut config, &["mode".into()]);
         assert_eq!(applied.len(), 1);
-        assert_eq!(
-            config.get("threshold").and_then(|v| v.as_f64()),
-            Some(0.2)
-        );
+        assert_eq!(config.get("threshold").and_then(|v| v.as_f64()), Some(0.2));
     }
 
     #[test]
@@ -1477,10 +1503,7 @@ mod tests {
         let applied = cascade_rules(&rules, &mut config, &["a".into()]);
         assert_eq!(applied.len(), 2);
         assert_eq!(config.get("b"), Some(&Value::Bool(true)));
-        assert_eq!(
-            config.get("c"),
-            Some(&Value::String("derived".into()))
-        );
+        assert_eq!(config.get("c"), Some(&Value::String("derived".into())));
     }
 
     #[test]

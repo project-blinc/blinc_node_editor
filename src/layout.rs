@@ -118,9 +118,8 @@ pub enum LayoutOrientation {
 ///
 /// Boxed + `Send + Sync` so the editor can store it cheaply and
 /// invoke it from the layout-trigger event.
-pub type CustomLayoutFn = std::sync::Arc<
-    dyn Fn(&LayoutContext<'_>) -> Vec<Point> + Send + Sync + 'static,
->;
+pub type CustomLayoutFn =
+    std::sync::Arc<dyn Fn(&LayoutContext<'_>) -> Vec<Point> + Send + Sync + 'static>;
 
 // Manual implementation of Debug because Arc<dyn Fn> isn't Debug.
 impl std::fmt::Debug for LayoutStrategy {
@@ -177,13 +176,9 @@ pub fn apply_layout<N, M, G>(
     match strategy {
         LayoutStrategy::Manual => nodes.iter().map(|n| n.position).collect(),
 
-        LayoutStrategy::Layered(config) => {
-            apply_layered_layout(config, nodes, connections, groups)
-        }
+        LayoutStrategy::Layered(config) => apply_layered_layout(config, nodes, connections, groups),
 
-        LayoutStrategy::Force(config) => {
-            apply_force_layout(config, nodes, connections, groups)
-        }
+        LayoutStrategy::Force(config) => apply_force_layout(config, nodes, connections, groups),
 
         LayoutStrategy::Custom(f) => {
             let node_views: Vec<LayoutNode<'_>> = nodes
@@ -434,8 +429,8 @@ fn force_kernel(
                 // proportionally wider neighbourhood. Linear in
                 // radii — no singularity at touching bboxes because
                 // the denominator stays centre-distance-based.
-                let r_scale = 1.0
-                    + (radii[i] + radii[j]) / config.ideal_edge_length.max(KERNEL_EPSILON);
+                let r_scale =
+                    1.0 + (radii[i] + radii[j]) / config.ideal_edge_length.max(KERNEL_EPSILON);
                 let magnitude = config.repulsion * r_scale / dist_sq;
                 let fx = (dx / dist) * magnitude;
                 let fy = (dy / dist) * magnitude;
@@ -478,9 +473,9 @@ fn force_kernel(
         // length, so each click of the auto-layout button compounds
         // the spread.
         if centroid_pull > 0.0 {
-            let (sx, sy) = positions.iter().fold((0.0_f32, 0.0_f32), |(sx, sy), &(x, y)| {
-                (sx + x, sy + y)
-            });
+            let (sx, sy) = positions
+                .iter()
+                .fold((0.0_f32, 0.0_f32), |(sx, sy), &(x, y)| (sx + x, sy + y));
             let inv = 1.0 / n as f32;
             let (cx, cy) = (sx * inv, sy * inv);
             for i in 0..n {
@@ -500,8 +495,7 @@ fn force_kernel(
             velocities[i].1 = (velocities[i].1 + forces[i].1) * config.damping;
             positions[i].0 += velocities[i].0;
             positions[i].1 += velocities[i].1;
-            total_kinetic +=
-                velocities[i].0 * velocities[i].0 + velocities[i].1 * velocities[i].1;
+            total_kinetic += velocities[i].0 * velocities[i].0 + velocities[i].1 * velocities[i].1;
         }
 
         if total_kinetic < quiescence {
@@ -787,10 +781,7 @@ fn apply_hierarchical_force_layout<N, M, G>(
                 let (w, h) = group_size[gi];
                 let origin_x = sx - w * 0.5;
                 let origin_y = sy - h * 0.5;
-                let (ox, oy) = group_local[gi]
-                    .get(&i)
-                    .copied()
-                    .unwrap_or((0.0, 0.0));
+                let (ox, oy) = group_local[gi].get(&i).copied().unwrap_or((0.0, 0.0));
                 Point::new(origin_x + ox, origin_y + oy)
             }
         };
@@ -954,7 +945,13 @@ fn layered_kernel(
     // Working edge list with back-edges reversed.
     let mut work_edges: Vec<(usize, usize)> = edges
         .iter()
-        .map(|&(u, v)| if back_edges.contains(&(u, v)) { (v, u) } else { (u, v) })
+        .map(|&(u, v)| {
+            if back_edges.contains(&(u, v)) {
+                (v, u)
+            } else {
+                (u, v)
+            }
+        })
         .collect();
     work_edges.sort_unstable();
     work_edges.dedup();
@@ -1379,7 +1376,10 @@ mod tests {
         let dx = positions[0].x - positions[1].x;
         let dy = positions[0].y - positions[1].y;
         let dist = (dx * dx + dy * dy).sqrt();
-        assert!(dist > 1.0, "overlapping nodes did not separate; dist = {dist}");
+        assert!(
+            dist > 1.0,
+            "overlapping nodes did not separate; dist = {dist}"
+        );
     }
 
     #[test]
@@ -1389,12 +1389,8 @@ mod tests {
         let nodes = vec![node("a", -2000.0, 0.0), node("b", 2000.0, 0.0)];
         let conns = vec![edge("a", "b")];
         let cfg = ForceConfig::default();
-        let positions = apply_layout::<(), (), ()>(
-            &LayoutStrategy::Force(cfg.clone()),
-            &nodes,
-            &conns,
-            &[],
-        );
+        let positions =
+            apply_layout::<(), (), ()>(&LayoutStrategy::Force(cfg.clone()), &nodes, &conns, &[]);
         let dx = positions[1].x - positions[0].x;
         let dy = positions[1].y - positions[0].y;
         let dist = (dx * dx + dy * dy).sqrt();
@@ -1423,12 +1419,8 @@ mod tests {
         ];
         let conns = vec![edge("a", "b"), edge("b", "d"), edge("a", "c")];
         let cfg = ForceConfig::default();
-        let r1 = apply_layout::<(), (), ()>(
-            &LayoutStrategy::Force(cfg.clone()),
-            &nodes,
-            &conns,
-            &[],
-        );
+        let r1 =
+            apply_layout::<(), (), ()>(&LayoutStrategy::Force(cfg.clone()), &nodes, &conns, &[]);
         let r2 = apply_layout::<(), (), ()>(&LayoutStrategy::Force(cfg), &nodes, &conns, &[]);
         assert_eq!(r1.len(), r2.len());
         for (a, b) in r1.iter().zip(r2.iter()) {
@@ -1454,13 +1446,10 @@ mod tests {
             // position outside the group's super-bbox.
             node("outside", 0.0, 0.0),
         ];
-        let group = crate::group::Group::<()>::new(
-            crate::group::GroupId::from("g1"),
-            "Group 1",
-        )
-        .add_member(crate::node::NodeId::from("a"))
-        .add_member(crate::node::NodeId::from("b"))
-        .add_member(crate::node::NodeId::from("c"));
+        let group = crate::group::Group::<()>::new(crate::group::GroupId::from("g1"), "Group 1")
+            .add_member(crate::node::NodeId::from("a"))
+            .add_member(crate::node::NodeId::from("b"))
+            .add_member(crate::node::NodeId::from("c"));
         let groups = vec![group];
 
         let positions = apply_layout::<(), (), ()>(
@@ -1506,26 +1495,16 @@ mod tests {
         // would double the gap; the phase-1 centroid pull
         // provides the missing rest length so the spread
         // stabilises.
-        let mut nodes = vec![
-            node("a", 0.0, 0.0),
-            node("b", 200.0, 0.0),
-        ];
-        let group = crate::group::Group::<()>::new(
-            crate::group::GroupId::from("g1"),
-            "Group 1",
-        )
-        .add_member(crate::node::NodeId::from("a"))
-        .add_member(crate::node::NodeId::from("b"));
+        let mut nodes = vec![node("a", 0.0, 0.0), node("b", 200.0, 0.0)];
+        let group = crate::group::Group::<()>::new(crate::group::GroupId::from("g1"), "Group 1")
+            .add_member(crate::node::NodeId::from("a"))
+            .add_member(crate::node::NodeId::from("b"));
         let groups = vec![group];
         let cfg = ForceConfig::default();
 
         // First run.
-        let positions1 = apply_layout::<(), (), ()>(
-            &LayoutStrategy::Force(cfg.clone()),
-            &nodes,
-            &[],
-            &groups,
-        );
+        let positions1 =
+            apply_layout::<(), (), ()>(&LayoutStrategy::Force(cfg.clone()), &nodes, &[], &groups);
         let dist1 = {
             let dx = positions1[1].x - positions1[0].x;
             let dy = positions1[1].y - positions1[0].y;
@@ -1537,12 +1516,8 @@ mod tests {
         for (n, p) in nodes.iter_mut().zip(positions1.iter()) {
             n.position = *p;
         }
-        let positions2 = apply_layout::<(), (), ()>(
-            &LayoutStrategy::Force(cfg),
-            &nodes,
-            &[],
-            &groups,
-        );
+        let positions2 =
+            apply_layout::<(), (), ()>(&LayoutStrategy::Force(cfg), &nodes, &[], &groups);
         let dist2 = {
             let dx = positions2[1].x - positions2[0].x;
             let dy = positions2[1].y - positions2[0].y;
@@ -1617,12 +1592,8 @@ mod tests {
             orientation: LayoutOrientation::TopToBottom,
             ..LayeredConfig::default()
         };
-        let positions = apply_layout::<(), (), ()>(
-            &LayoutStrategy::Layered(config),
-            &nodes,
-            &conns,
-            &[],
-        );
+        let positions =
+            apply_layout::<(), (), ()>(&LayoutStrategy::Layered(config), &nodes, &conns, &[]);
         // In TopToBottom the perpendicular axis becomes height
         // (72px default), so per-layer dy = 72/2 + 240 + 72/2 = 312.
         for w in positions.windows(2) {
@@ -1673,7 +1644,12 @@ mod tests {
             node("c", 50.0, 60.0),
             node("d", 70.0, 80.0),
         ];
-        let conns = vec![edge("a", "b"), edge("a", "c"), edge("b", "d"), edge("c", "d")];
+        let conns = vec![
+            edge("a", "b"),
+            edge("a", "c"),
+            edge("b", "d"),
+            edge("c", "d"),
+        ];
         let r1 = apply_layout::<(), (), ()>(
             &LayoutStrategy::Layered(LayeredConfig::default()),
             &nodes,
@@ -1702,13 +1678,10 @@ mod tests {
             node("d", 0.0, 0.0),
         ];
         let conns = vec![edge("a", "b"), edge("b", "c"), edge("d", "a")];
-        let group = crate::group::Group::<()>::new(
-            crate::group::GroupId::from("g1"),
-            "Group 1",
-        )
-        .add_member(crate::node::NodeId::from("a"))
-        .add_member(crate::node::NodeId::from("b"))
-        .add_member(crate::node::NodeId::from("c"));
+        let group = crate::group::Group::<()>::new(crate::group::GroupId::from("g1"), "Group 1")
+            .add_member(crate::node::NodeId::from("a"))
+            .add_member(crate::node::NodeId::from("b"))
+            .add_member(crate::node::NodeId::from("c"));
 
         let positions = apply_layout::<(), (), ()>(
             &LayoutStrategy::Layered(LayeredConfig::default()),

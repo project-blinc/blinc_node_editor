@@ -47,13 +47,29 @@ use std::sync::Arc;
 pub struct ExposedPortId(pub Arc<str>);
 
 impl ExposedPortId {
-    pub fn new(id: impl Into<Arc<str>>) -> Self { Self(id.into()) }
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn new(id: impl Into<Arc<str>>) -> Self {
+        Self(id.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-impl From<&str> for ExposedPortId    { fn from(s: &str)    -> Self { Self(Arc::from(s)) } }
-impl From<String> for ExposedPortId  { fn from(s: String)  -> Self { Self(Arc::from(s)) } }
-impl From<Arc<str>> for ExposedPortId { fn from(s: Arc<str>) -> Self { Self(s) } }
+impl From<&str> for ExposedPortId {
+    fn from(s: &str) -> Self {
+        Self(Arc::from(s))
+    }
+}
+impl From<String> for ExposedPortId {
+    fn from(s: String) -> Self {
+        Self(Arc::from(s))
+    }
+}
+impl From<Arc<str>> for ExposedPortId {
+    fn from(s: Arc<str>) -> Self {
+        Self(s)
+    }
+}
 
 /// A port exposed on the canvas boundary — the subgraph's interface
 /// to its parent. Rendered at the left edge (Input direction) or
@@ -95,7 +111,10 @@ pub struct InternalTarget {
 
 impl InternalTarget {
     pub fn new(node: impl Into<NodeId>, port: impl Into<PortId>) -> Self {
-        Self { node: node.into(), port: port.into() }
+        Self {
+            node: node.into(),
+            port: port.into(),
+        }
     }
 }
 

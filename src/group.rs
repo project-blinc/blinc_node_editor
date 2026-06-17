@@ -21,13 +21,29 @@ use std::sync::Arc;
 pub struct GroupId(pub Arc<str>);
 
 impl GroupId {
-    pub fn new(id: impl Into<Arc<str>>) -> Self { Self(id.into()) }
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn new(id: impl Into<Arc<str>>) -> Self {
+        Self(id.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-impl From<&str> for GroupId    { fn from(s: &str)    -> Self { Self(Arc::from(s)) } }
-impl From<String> for GroupId  { fn from(s: String)  -> Self { Self(Arc::from(s)) } }
-impl From<Arc<str>> for GroupId { fn from(s: Arc<str>) -> Self { Self(s) } }
+impl From<&str> for GroupId {
+    fn from(s: &str) -> Self {
+        Self(Arc::from(s))
+    }
+}
+impl From<String> for GroupId {
+    fn from(s: String) -> Self {
+        Self(Arc::from(s))
+    }
+}
+impl From<Arc<str>> for GroupId {
+    fn from(s: Arc<str>) -> Self {
+        Self(s)
+    }
+}
 
 /// A named, visually-distinct grouping of nodes. The editor renders a
 /// rounded soft-fill rect with a header bar (title + description +
@@ -238,19 +254,39 @@ pub enum BadgeKind {
 
 impl StatusBadge {
     pub fn info(count: u32) -> Self {
-        Self { kind: BadgeKind::Info, count: Some(count), tooltip: None }
+        Self {
+            kind: BadgeKind::Info,
+            count: Some(count),
+            tooltip: None,
+        }
     }
     pub fn warning(count: u32) -> Self {
-        Self { kind: BadgeKind::Warning, count: Some(count), tooltip: None }
+        Self {
+            kind: BadgeKind::Warning,
+            count: Some(count),
+            tooltip: None,
+        }
     }
     pub fn error(count: u32) -> Self {
-        Self { kind: BadgeKind::Error, count: Some(count), tooltip: None }
+        Self {
+            kind: BadgeKind::Error,
+            count: Some(count),
+            tooltip: None,
+        }
     }
     pub fn success() -> Self {
-        Self { kind: BadgeKind::Success, count: None, tooltip: None }
+        Self {
+            kind: BadgeKind::Success,
+            count: None,
+            tooltip: None,
+        }
     }
     pub fn running() -> Self {
-        Self { kind: BadgeKind::Running, count: None, tooltip: None }
+        Self {
+            kind: BadgeKind::Running,
+            count: None,
+            tooltip: None,
+        }
     }
     pub fn with_tooltip(mut self, tooltip: impl Into<String>) -> Self {
         self.tooltip = Some(tooltip.into());

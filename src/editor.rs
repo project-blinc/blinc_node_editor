@@ -26,9 +26,9 @@
 //! ```
 
 use ahash::AHashMap;
-use blinc_core::DrawContext;
 use blinc_core::layer::{Point, Rect};
 use blinc_core::reactive::{SignalId, State};
+use blinc_core::DrawContext;
 use blinc_layout::Div;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -38,7 +38,7 @@ use std::time::Duration;
 use blinc_canvas_kit::{CanvasBackground, CanvasKit, CanvasViewport};
 
 use crate::connection::{
-    Connection, ConnectionId, ConnectionState, ConnectRequest, ValidationOutcome,
+    ConnectRequest, Connection, ConnectionId, ConnectionState, ValidationOutcome,
 };
 use crate::event::{AlignEdge, DistributeAxis, EditorCommand, EditorEvent, FlashKind, HoverTarget};
 use crate::group::{Group, GroupId, StatusBadge};
@@ -46,15 +46,13 @@ use crate::interaction::DragConnect;
 use crate::layout::{apply_layout, LayoutStrategy};
 use crate::node::{NodeId, NodeInstance, NodeTemplate};
 use crate::port::{PortAddress, PortKind};
-use crate::render::{
-    draw_group, draw_node_at, draw_port, iter_port_positions, PortHoverState,
-};
-use crate::slot::{
-    compute_group_slots, compute_node_slots, fingerprint_group, fingerprint_node, group_inputs_from,
-    node_inputs_from, warm_group_slot_cache, warm_node_slot_cache, GroupSlotCache, GroupSlots,
-    NodeFingerprint, NodeSlotCache, NodeSlots,
-};
 use crate::region::RegionId;
+use crate::render::{draw_group, draw_node_at, draw_port, iter_port_positions, PortHoverState};
+use crate::slot::{
+    compute_group_slots, compute_node_slots, fingerprint_group, fingerprint_node,
+    group_inputs_from, node_inputs_from, warm_group_slot_cache, warm_node_slot_cache,
+    GroupSlotCache, GroupSlots, NodeFingerprint, NodeSlotCache, NodeSlots,
+};
 use crate::subgraph::ExposedPort;
 use crate::theme::{NodeEditorTheme, ThemeResolver};
 
@@ -68,9 +66,8 @@ use crate::theme::{NodeEditorTheme, ThemeResolver};
 // ─────────────────────────────────────────────────────────────────────
 
 type ValidateFn<K> = Arc<dyn Fn(&ConnectRequest<'_, K>) -> ValidationOutcome + Send + Sync>;
-type ContextMenuFn = Arc<
-    dyn Fn(crate::event::ContextMenuTarget, blinc_core::layer::Point) + Send + Sync,
->;
+type ContextMenuFn =
+    Arc<dyn Fn(crate::event::ContextMenuTarget, blinc_core::layer::Point) + Send + Sync>;
 
 // ─────────────────────────────────────────────────────────────────────
 // Graph state — owned by the editor, swapped by the host via set_graph
@@ -293,7 +290,6 @@ pub struct NodeEditor<K: PortKind, N, C, G> {
     /// `None` before the first pointer event.
     last_screen_pos: Arc<RwLock<Option<Point>>>,
 
-
     // ── Validators (the only callback surface) ─────────────────────
     on_validate: Arc<RwLock<Option<ValidateFn<K>>>>,
     /// Synchronous callback fired alongside `EditorEvent::ContextMenuRequested`
@@ -313,7 +309,7 @@ pub struct NodeEditor<K: PortKind, N, C, G> {
     /// of a content node; dropped when the node leaves the graph.
     /// `Drop` on `Portal` unsubscribes from any signals it read so
     /// removed nodes stop dirtying the canvas.
-    portals: Arc<Mutex<AHashMap<NodeId, blinc_portal_ui::Portal>>>,
+    portals: Arc<Mutex<blinc_portal_ui::PortalManager<NodeId>>>,
 
     /// Per-node consumed-height feedback from the portal's previous
     /// frame. Read on this frame's slot-input prep to grow the body
@@ -367,7 +363,8 @@ pub struct NodeEditor<K: PortKind, N, C, G> {
     /// [`Self::subgraph`] and calls [`Self::set_graph`] with its
     /// contents.
     #[allow(clippy::type_complexity)]
-    subgraphs: Arc<RwLock<AHashMap<crate::subgraph::SubgraphId, crate::subgraph::Subgraph<K, N, C, G>>>>,
+    subgraphs:
+        Arc<RwLock<AHashMap<crate::subgraph::SubgraphId, crate::subgraph::Subgraph<K, N, C, G>>>>,
 
     /// Monotonic counter bumped on every subgraph CRUD — used by
     /// [`Self::subgraph_signal`] so hosts can `derive` against the
@@ -411,9 +408,11 @@ struct RenderStatsCell {
 impl RenderStatsCell {
     fn store(&self, stats: RenderStats) {
         self.total_nodes.store(stats.total_nodes, Ordering::Relaxed);
-        self.visible_nodes.store(stats.visible_nodes, Ordering::Relaxed);
+        self.visible_nodes
+            .store(stats.visible_nodes, Ordering::Relaxed);
         self.total_edges.store(stats.total_edges, Ordering::Relaxed);
-        self.visible_edges.store(stats.visible_edges, Ordering::Relaxed);
+        self.visible_edges
+            .store(stats.visible_edges, Ordering::Relaxed);
     }
     fn snapshot(&self) -> RenderStats {
         RenderStats {
@@ -493,8 +492,7 @@ where
         // sides see one map.
         let group_text_rects: Arc<Mutex<AHashMap<String, Rect>>> =
             Arc::new(Mutex::new(AHashMap::new()));
-        let badge_rects: Arc<Mutex<AHashMap<String, Rect>>> =
-            Arc::new(Mutex::new(AHashMap::new()));
+        let badge_rects: Arc<Mutex<AHashMap<String, Rect>>> = Arc::new(Mutex::new(AHashMap::new()));
         let last_click: Arc<Mutex<Option<(String, web_time::Instant)>>> =
             Arc::new(Mutex::new(None));
         let events_queue: Arc<Mutex<Vec<EditorEvent<K>>>> = Arc::new(Mutex::new(Vec::new()));
@@ -580,10 +578,8 @@ where
                         // hosts use it as a transition-from anchor
                         // when animating into the subgraph view.
                         let (w, h) = node.size.unwrap_or((180.0, 72.0));
-                        let centre = Point::new(
-                            node.position.x + w * 0.5,
-                            node.position.y + h * 0.5,
-                        );
+                        let centre =
+                            Point::new(node.position.x + w * 0.5, node.position.y + h * 0.5);
                         (sub_id, centre)
                     };
                     let anchor_screen = kit_for_listener.content_to_screen(anchor_content);
@@ -670,10 +666,8 @@ where
             layout_strategy: Arc::new(RwLock::new(LayoutStrategy::default())),
             graph_rev: ctx.use_state_keyed(&format!("{key}_ne_graph"), || 0u64),
             drag_state: ctx.use_state_keyed(&format!("{key}_ne_drag"), DragConnect::default),
-            hover_state: ctx.use_state_keyed::<Option<HoverTarget>, _>(
-                &format!("{key}_ne_hover"),
-                || None,
-            ),
+            hover_state: ctx
+                .use_state_keyed::<Option<HoverTarget>, _>(&format!("{key}_ne_hover"), || None),
             events_rev,
             events_queue,
             flashes: Arc::new(RwLock::new(AHashMap::new())),
@@ -684,7 +678,7 @@ where
             last_screen_pos: Arc::new(RwLock::new(None)),
             on_validate: Arc::new(RwLock::new(None)),
             on_context_menu: Arc::new(RwLock::new(None)),
-            portals: Arc::new(Mutex::new(AHashMap::new())),
+            portals: Arc::new(Mutex::new(blinc_portal_ui::PortalManager::new())),
             portal_content_heights: Arc::new(Mutex::new(AHashMap::new())),
             render_stats: Arc::new(RenderStatsCell::default()),
             group_text_rects,
@@ -717,7 +711,13 @@ where
         node_id: &NodeId,
         inputs: &mut crate::slot::NodeSlotInputs,
     ) {
-        if let Some(stored) = self.portal_content_heights.lock().unwrap().get(node_id).copied() {
+        if let Some(stored) = self
+            .portal_content_heights
+            .lock()
+            .unwrap()
+            .get(node_id)
+            .copied()
+        {
             // The portal's `consumed_height` measures the closure's
             // emitted content. The slot's body region also needs
             // breathing room equal to the inner padding the renderer
@@ -898,10 +898,7 @@ where
         let name = name.into();
         {
             let mut subs = self.subgraphs.write().unwrap();
-            subs.insert(
-                id.clone(),
-                crate::subgraph::Subgraph::new(id.clone(), name),
-            );
+            subs.insert(id.clone(), crate::subgraph::Subgraph::new(id.clone(), name));
         }
         self.bump_subgraph_rev();
         id
@@ -1006,11 +1003,7 @@ where
     /// Read-only access to a stored subgraph via a closure (no
     /// clone). Returns `None` from the closure when the id is
     /// absent.
-    pub fn with_subgraph<R, F>(
-        &self,
-        id: &crate::subgraph::SubgraphId,
-        f: F,
-    ) -> Option<R>
+    pub fn with_subgraph<R, F>(&self, id: &crate::subgraph::SubgraphId, f: F) -> Option<R>
     where
         F: FnOnce(&crate::subgraph::Subgraph<K, N, C, G>) -> R,
     {
@@ -1026,11 +1019,7 @@ where
     /// even if it didn't actually mutate, otherwise callers have
     /// to plumb a "did change" flag through every closure they
     /// write).
-    pub fn with_subgraph_graph_mut<R, F>(
-        &self,
-        id: &crate::subgraph::SubgraphId,
-        f: F,
-    ) -> Option<R>
+    pub fn with_subgraph_graph_mut<R, F>(&self, id: &crate::subgraph::SubgraphId, f: F) -> Option<R>
     where
         F: FnOnce(&mut crate::subgraph::Subgraph<K, N, C, G>) -> R,
     {
@@ -1108,10 +1097,8 @@ where
                 return;
             };
             let (w, h) = node.size.unwrap_or((180.0, 72.0));
-            let centre = blinc_core::layer::Point::new(
-                node.position.x + w * 0.5,
-                node.position.y + h * 0.5,
-            );
+            let centre =
+                blinc_core::layer::Point::new(node.position.x + w * 0.5, node.position.y + h * 0.5);
             (sub, self.kit.content_to_screen(centre))
         };
         self.events_queue
@@ -1297,7 +1284,10 @@ where
             let templates = self.templates.read().unwrap();
             let component = {
                 let g = self.graph.read().unwrap();
-                g.nodes.iter().find(|n| n.id == *id).map(|n| n.component.clone())
+                g.nodes
+                    .iter()
+                    .find(|n| n.id == *id)
+                    .map(|n| n.component.clone())
             };
             match component {
                 Some(c) => templates
@@ -1703,9 +1693,8 @@ where
         // subgraph with no reference on the active canvas has nothing
         // to focus, so it's intentionally elided from the hit list.
         for sub in subgraphs.values() {
-            let matched = contains(sub.id.as_str())
-                || contains(&sub.name)
-                || contains(&sub.namespace);
+            let matched =
+                contains(sub.id.as_str()) || contains(&sub.name) || contains(&sub.namespace);
             if !matched {
                 continue;
             }
@@ -2625,30 +2614,36 @@ where
             // Defensive: a stale fingerprint shouldn't reach this
             // path, but fall back to a zero-size compute so the
             // warm never panics.
-            node_inputs_by_fp.get(&fp).cloned().unwrap_or(crate::slot::NodeSlotInputs {
-                width: 0.0,
-                has_subtitle: false,
-                has_badge: false,
-                has_icon: false,
-                icon_size: 16.0,
-                title_font_size: 13.0,
-                subtitle_font_size: 11.0,
-                content_padding: 10.0,
-                content_height: 0.0,
-            })
+            node_inputs_by_fp
+                .get(&fp)
+                .cloned()
+                .unwrap_or(crate::slot::NodeSlotInputs {
+                    width: 0.0,
+                    has_subtitle: false,
+                    has_badge: false,
+                    has_icon: false,
+                    icon_size: 16.0,
+                    title_font_size: 13.0,
+                    subtitle_font_size: 11.0,
+                    content_padding: 10.0,
+                    content_height: 0.0,
+                })
         });
 
         warm_group_slot_cache(&self.group_slots, &group_wanted, |fp| {
-            group_inputs_by_fp.get(&fp).cloned().unwrap_or(crate::slot::GroupSlotInputs {
-                width: 0.0,
-                header_height: 28.0,
-                has_description: false,
-                has_badge: false,
-                title_font_size: 13.0,
-                subtitle_font_size: 11.0,
-                content_padding: 10.0,
-                description_lines: 1,
-            })
+            group_inputs_by_fp
+                .get(&fp)
+                .cloned()
+                .unwrap_or(crate::slot::GroupSlotInputs {
+                    width: 0.0,
+                    header_height: 28.0,
+                    has_description: false,
+                    has_badge: false,
+                    title_font_size: 13.0,
+                    subtitle_font_size: 11.0,
+                    content_padding: 10.0,
+                    description_lines: 1,
+                })
         });
     }
 
@@ -2663,7 +2658,12 @@ where
     ) -> NodeSlots {
         let mut inputs = node_inputs_from::<K, N>(template, instance, theme);
         self.apply_portal_height_override(&instance.id, &mut inputs);
-        let fp = fingerprint_node(template, instance, &inputs, self.theme_revision.load(Ordering::Relaxed));
+        let fp = fingerprint_node(
+            template,
+            instance,
+            &inputs,
+            self.theme_revision.load(Ordering::Relaxed),
+        );
         if let Some(slots) = self.node_slots.read().unwrap().get(&fp).cloned() {
             return slots;
         }
@@ -2682,11 +2682,7 @@ where
     /// matches what the renderer paints. Falls back to a zero-rect
     /// when the node has no registered template — same defensive
     /// behaviour as the rest of the editor.
-    pub fn node_bounds_for(
-        &self,
-        instance: &NodeInstance<N>,
-        theme: &ThemeResolver<'_>,
-    ) -> Rect {
+    pub fn node_bounds_for(&self, instance: &NodeInstance<N>, theme: &ThemeResolver<'_>) -> Rect {
         let templates = self.templates.read().unwrap();
         let Some(template) = templates.get(&instance.component) else {
             return Rect::new(instance.position.x, instance.position.y, 0.0, 0.0);
@@ -2772,10 +2768,7 @@ where
     /// react asynchronously".
     pub fn on_context_menu(
         self,
-        cb: impl Fn(crate::event::ContextMenuTarget, blinc_core::layer::Point)
-            + Send
-            + Sync
-            + 'static,
+        cb: impl Fn(crate::event::ContextMenuTarget, blinc_core::layer::Point) + Send + Sync + 'static,
     ) -> Self {
         *self.on_context_menu.write().unwrap() = Some(Arc::new(cb));
         self
@@ -2827,9 +2820,7 @@ where
                 key_editor.kit.set_force_pan(true);
                 return;
             }
-            let mods = blinc_core::events::Modifiers::new(
-                evt.shift, evt.ctrl, evt.alt, evt.meta,
-            );
+            let mods = blinc_core::events::Modifiers::new(evt.shift, evt.ctrl, evt.alt, evt.meta);
             key_editor.handle_key_down(kc, mods);
         });
         let key_up_editor = self.clone();
@@ -3008,12 +2999,7 @@ where
                         .groups
                         .iter()
                         .find(|g| g.id == group_id)
-                        .map(|g| {
-                            (
-                                g.name.clone(),
-                                g.description.clone().unwrap_or_default(),
-                            )
-                        })
+                        .map(|g| (g.name.clone(), g.description.clone().unwrap_or_default()))
                         .unwrap_or_default()
                 };
                 let mut sel = click_editor.kit.selection().selected;
@@ -3166,11 +3152,7 @@ where
                 Some(RegionId::Node(id)) => {
                     let position = {
                         let graph = end_editor.graph.read().unwrap();
-                        graph
-                            .nodes
-                            .iter()
-                            .find(|n| n.id == id)
-                            .map(|n| n.position)
+                        graph.nodes.iter().find(|n| n.id == id).map(|n| n.position)
                     };
                     if let Some(pos) = position {
                         // Snap-to-grid quantises the final position before
@@ -3208,11 +3190,7 @@ where
                     // top of the group's body for double-click-to-edit
                     // detection, so the user's pointer-down/up may land
                     // on those region ids instead of the bare body.
-                    detect_group_drag_membership_changes(
-                        &end_editor,
-                        &g,
-                        evt.modifiers.shift,
-                    );
+                    detect_group_drag_membership_changes(&end_editor, &g, evt.modifiers.shift);
                 }
                 _ => {}
             }
@@ -3227,9 +3205,7 @@ where
             use blinc_core::events::event_types;
             if matches!(
                 evt.event_type,
-                event_types::POINTER_DOWN
-                    | event_types::POINTER_UP
-                    | event_types::POINTER_MOVE
+                event_types::POINTER_DOWN | event_types::POINTER_UP | event_types::POINTER_MOVE
             ) {
                 *pos_editor.last_screen_pos.write().unwrap() =
                     Some(Point::new(evt.local_x, evt.local_y));
@@ -3428,10 +3404,10 @@ where
                     if let Some(inner_body) = preliminary_bodies.get(&inner.id) {
                         let nx = union.x().min(inner_body.x());
                         let ny = union.y().min(inner_body.y());
-                        let nxe = (union.x() + union.width())
-                            .max(inner_body.x() + inner_body.width());
-                        let nye = (union.y() + union.height())
-                            .max(inner_body.y() + inner_body.height());
+                        let nxe =
+                            (union.x() + union.width()).max(inner_body.x() + inner_body.width());
+                        let nye =
+                            (union.y() + union.height()).max(inner_body.y() + inner_body.height());
                         union = Rect::new(nx, ny, nxe - nx, nye - ny);
                     }
                 }
@@ -3457,19 +3433,15 @@ where
             //   `last_group_auto_bounds` cache keeps the chrome
             //   anchored if the group has temporarily lost all
             //   members (e.g. last member dragged out).
-            let live_auto_bounds =
-                compute_group_auto_bounds(group, &frame.graph.nodes, |n| {
-                    self.node_bounds_for(n, &theme)
-                });
+            let live_auto_bounds = compute_group_auto_bounds(group, &frame.graph.nodes, |n| {
+                self.node_bounds_for(n, &theme)
+            });
             let shift_excl_bounds = if preview.shift_held {
                 if let Some(n) = preview.dragged_node.as_ref() {
                     if group.members.contains(n) {
-                        compute_group_auto_bounds_excluding(
-                            group,
-                            &frame.graph.nodes,
-                            n,
-                            |node| self.node_bounds_for(node, &theme),
-                        )
+                        compute_group_auto_bounds_excluding(group, &frame.graph.nodes, n, |node| {
+                            self.node_bounds_for(node, &theme)
+                        })
                     } else {
                         None
                     }
@@ -3563,9 +3535,7 @@ where
                 is_selected,
                 border_kind,
             );
-            if let (Some(rect), Some(badge)) =
-                (group_badge_rect, group.badge.as_ref())
-            {
+            if let (Some(rect), Some(badge)) = (group_badge_rect, group.badge.as_ref()) {
                 if badge.tooltip.is_some() {
                     let region = RegionId::GroupBadge(group.id.clone()).encode();
                     self.kit.hit_rect(region.clone(), rect);
@@ -3613,10 +3583,8 @@ where
                     .map(|grown| {
                         let nx = natural.x().min(grown.x());
                         let ny = natural.y().min(grown.y());
-                        let nxe = (natural.x() + natural.width())
-                            .max(grown.x() + grown.width());
-                        let nye = (natural.y() + natural.height())
-                            .max(grown.y() + grown.height());
+                        let nxe = (natural.x() + natural.width()).max(grown.x() + grown.width());
+                        let nye = (natural.y() + natural.height()).max(grown.y() + grown.height());
                         Rect::new(nx, ny, nxe - nx, nye - ny)
                     })
                     .unwrap_or(natural)
@@ -3626,16 +3594,14 @@ where
             // stays readable on the accent band. `draw_group` /
             // `draw_group_header_chrome` honour the override
             // automatically when the group carries an accent.
-            let chrome_override = group
-                .accent
-                .map(|a| {
-                    let lum = 0.299 * a.r + 0.587 * a.g + 0.114 * a.b;
-                    if lum > 0.55 {
-                        blinc_core::layer::Color::rgba(0.08, 0.09, 0.12, 1.0)
-                    } else {
-                        blinc_core::layer::Color::rgba(0.96, 0.96, 0.97, 1.0)
-                    }
-                });
+            let chrome_override = group.accent.map(|a| {
+                let lum = 0.299 * a.r + 0.587 * a.g + 0.114 * a.b;
+                if lum > 0.55 {
+                    blinc_core::layer::Color::rgba(0.08, 0.09, 0.12, 1.0)
+                } else {
+                    blinc_core::layer::Color::rgba(0.96, 0.96, 0.97, 1.0)
+                }
+            });
             let chrome = crate::render::draw_group_header_chrome(
                 ctx,
                 group,
@@ -3712,10 +3678,8 @@ where
             // among them doesn't matter (rects don't overlap), but
             // keeping the visually-leftmost chip registered first
             // mirrors the painted left-to-right flex order.
-            self.kit.hit_rect(
-                RegionId::GroupEdit(group.id.clone()).encode(),
-                chrome.edit,
-            );
+            self.kit
+                .hit_rect(RegionId::GroupEdit(group.id.clone()).encode(), chrome.edit);
             self.kit.hit_rect(
                 RegionId::GroupDelete(group.id.clone()).encode(),
                 chrome.delete,
@@ -3735,9 +3699,8 @@ where
 
         // 2. Connections — drawn beneath nodes so endpoints sit on
         //    top, with hover / select highlights.
-        let slot_lookup = |tpl: &NodeTemplate<K>, n: &NodeInstance<N>| {
-            self.node_slots_for(tpl, n, &theme)
-        };
+        let slot_lookup =
+            |tpl: &NodeTemplate<K>, n: &NodeInstance<N>| self.node_slots_for(tpl, n, &theme);
         let hovered_edge = match self.hovered() {
             Some(HoverTarget::Edge(id)) => Some(id),
             _ => None,
@@ -3785,10 +3748,8 @@ where
         // connection would silently land on what was now the bottom
         // port. Template order keeps the geometry stable while the
         // user is dragging.
-        let mut sides: std::collections::HashMap<
-            (NodeId, PortSide),
-            Vec<(PortAddress, f32)>,
-        > = std::collections::HashMap::new();
+        let mut sides: std::collections::HashMap<(NodeId, PortSide), Vec<(PortAddress, f32)>> =
+            std::collections::HashMap::new();
         for node in &frame.graph.nodes {
             if hidden_nodes.contains(&node.id) {
                 continue;
@@ -3796,8 +3757,11 @@ where
             let Some(template) = frame.templates.get(&node.component) else {
                 continue;
             };
-            for (template_idx, desc) in
-                template.inputs.iter().chain(template.outputs.iter()).enumerate()
+            for (template_idx, desc) in template
+                .inputs
+                .iter()
+                .chain(template.outputs.iter())
+                .enumerate()
             {
                 let addr = PortAddress::new(node.id.clone(), desc.id.clone());
                 let side = match desc.resolved_position() {
@@ -3856,9 +3820,7 @@ where
             // restores the outer bounds. No extra edge buffer —
             // the corner-clearance inset already provides it.
             let required = if max_lr > 0.0 {
-                2.0 * corner_radius
-                    + max_lr * port_d
-                    + (max_lr - 1.0).max(0.0) * port_spacing
+                2.0 * corner_radius + max_lr * port_d + (max_lr - 1.0).max(0.0) * port_spacing
             } else {
                 0.0
             };
@@ -3896,10 +3858,7 @@ where
                     PortSide::Right => {
                         let strip_top = bounds.y() + inset;
                         let strip_h = (bounds.height() - inset * 2.0).max(0.0);
-                        Point::new(
-                            bounds.x() + bounds.width(),
-                            strip_top + strip_h * t,
-                        )
+                        Point::new(bounds.x() + bounds.width(), strip_top + strip_h * t)
                     }
                     PortSide::Top => {
                         let strip_left = bounds.x() + inset;
@@ -3909,10 +3868,7 @@ where
                     PortSide::Bottom => {
                         let strip_left = bounds.x() + inset;
                         let strip_w = (bounds.width() - inset * 2.0).max(0.0);
-                        Point::new(
-                            strip_left + strip_w * t,
-                            bounds.y() + bounds.height(),
-                        )
+                        Point::new(strip_left + strip_w * t, bounds.y() + bounds.height())
                     }
                 };
                 port_overrides.insert(addr.clone(), pt);
@@ -3958,7 +3914,12 @@ where
         // Stored at end of frame via `render_stats.store(...)` so
         // hosts can read `last_render_stats()` to surface a
         // "X / Y visible" HUD.
-        let total_nodes = frame.graph.nodes.iter().filter(|n| !hidden_nodes.contains(&n.id)).count();
+        let total_nodes = frame
+            .graph
+            .nodes
+            .iter()
+            .filter(|n| !hidden_nodes.contains(&n.id))
+            .count();
         let total_edges = frame.graph.connections.len();
         let mut visible_nodes = 0_usize;
         let mut visible_edges = 0_usize;
@@ -4051,17 +4012,20 @@ where
                         continue;
                     };
                     let anchor = raw_to
-                        .or_else(|| to_grp.and_then(|g2| {
-                            collapsed_group_rects.get(g2).map(|r| {
-                                Point::new(
-                                    r.x() + r.width() * 0.5,
-                                    r.y() + r.height() * 0.5,
-                                )
+                        .or_else(|| {
+                            to_grp.and_then(|g2| {
+                                collapsed_group_rects.get(g2).map(|r| {
+                                    Point::new(r.x() + r.width() * 0.5, r.y() + r.height() * 0.5)
+                                })
                             })
-                        }))
-                        .or_else(|| to_sub.and_then(|n| subgraph_rect(n).map(|r| {
-                            Point::new(r.x() + r.width() * 0.5, r.y() + r.height() * 0.5)
-                        })))
+                        })
+                        .or_else(|| {
+                            to_sub.and_then(|n| {
+                                subgraph_rect(n).map(|r| {
+                                    Point::new(r.x() + r.width() * 0.5, r.y() + r.height() * 0.5)
+                                })
+                            })
+                        })
                         .unwrap_or_else(|| {
                             Point::new(rect.x() + rect.width() * 0.5, rect.y() - 20.0)
                         });
@@ -4072,17 +4036,20 @@ where
                         continue;
                     };
                     let anchor = raw_to
-                        .or_else(|| to_grp.and_then(|g2| {
-                            collapsed_group_rects.get(g2).map(|r| {
-                                Point::new(
-                                    r.x() + r.width() * 0.5,
-                                    r.y() + r.height() * 0.5,
-                                )
+                        .or_else(|| {
+                            to_grp.and_then(|g2| {
+                                collapsed_group_rects.get(g2).map(|r| {
+                                    Point::new(r.x() + r.width() * 0.5, r.y() + r.height() * 0.5)
+                                })
                             })
-                        }))
-                        .or_else(|| to_sub.and_then(|n| subgraph_rect(n).map(|r| {
-                            Point::new(r.x() + r.width() * 0.5, r.y() + r.height() * 0.5)
-                        })))
+                        })
+                        .or_else(|| {
+                            to_sub.and_then(|n| {
+                                subgraph_rect(n).map(|r| {
+                                    Point::new(r.x() + r.width() * 0.5, r.y() + r.height() * 0.5)
+                                })
+                            })
+                        })
                         .unwrap_or_else(|| {
                             Point::new(rect.x() + rect.width() * 0.5, rect.y() - 20.0)
                         });
@@ -4260,15 +4227,12 @@ where
                 // painted the inset itself a moment ago; here we
                 // use the same helper to inset the portal a step
                 // further so widgets sit cleanly inside the inset.
-                let Some(slot_rects) = crate::render::content_slot_rects(bounds, &slots)
-                else {
+                let Some(slot_rects) = crate::render::content_slot_rects(bounds, &slots) else {
                     continue;
                 };
                 let body_rect = slot_rects.portal;
                 let mut portals = self.portals.lock().unwrap();
-                let portal = portals
-                    .entry(node.id.clone())
-                    .or_insert_with(|| blinc_portal_ui::Portal::new(node.id.as_str()));
+                let portal = portals.get_or_make(node.id.clone());
                 let style = blinc_portal_ui::PortalStyle::from_active_theme();
                 // Pure pass-through bridge — node-editor's canvas
                 // is rendered IN canvas-content space already (the
@@ -4277,15 +4241,11 @@ where
                 // anchoring requires screen-space; the bridge wraps
                 // the kit's content_to_screen for that.
                 let kit_for_bridge = self.kit.clone();
-                let host = blinc_portal_ui::HostBridge {
-                    canvas_to_screen: std::sync::Arc::new(move |p| {
-                        kit_for_bridge.content_to_screen(p)
-                    }),
-                    screen_to_canvas: {
-                        let kit = self.kit.clone();
-                        std::sync::Arc::new(move |p| kit.screen_to_content(p))
-                    },
-                };
+                let kit_for_inverse = self.kit.clone();
+                let host = blinc_portal_ui::HostBridge::from_closures(
+                    move |p| kit_for_bridge.content_to_screen(p),
+                    move |p| kit_for_inverse.screen_to_content(p),
+                );
                 let render = content.render.clone();
                 let node_id = node.id.clone();
                 // Match the inset background's corner radius
@@ -4294,15 +4254,13 @@ where
                 // curve the inset paints — no glyph or sparkline
                 // tail bleeds past the visible inset edge.
                 let inset_radius = theme.node_corner_radius() * 0.7;
-                let portal_animating = portal.frame(
-                    ctx,
-                    &self.kit,
-                    body_rect,
-                    inset_radius,
-                    &style,
-                    &host,
-                    |ui| render(&node_id, ui),
-                );
+                let portal_animating = portal
+                    .begin(ctx, &self.kit, body_rect)
+                    .clip_radius(inset_radius)
+                    .style(&style)
+                    .host(&host)
+                    .run(|ui| render(&node_id, ui))
+                    .needs_redraw();
                 // Feed the portal's measured content height back
                 // to the slot tree for the NEXT frame so the body
                 // grows to fit. Triggers a one-frame lag the first
@@ -4455,15 +4413,10 @@ where
                 Some(HoverTarget::NodeBadge(ref node_id)) => {
                     let region = RegionId::NodeBadge(node_id.clone()).encode();
                     let rect = self.badge_rects.lock().unwrap().get(&region).copied();
-                    if let (Some(node), Some(rect)) = (
-                        frame.graph.nodes.iter().find(|n| n.id == *node_id),
-                        rect,
-                    ) {
-                        if let Some(tip) = node
-                            .badge
-                            .as_ref()
-                            .and_then(|b| b.tooltip.as_deref())
-                        {
+                    if let (Some(node), Some(rect)) =
+                        (frame.graph.nodes.iter().find(|n| n.id == *node_id), rect)
+                    {
+                        if let Some(tip) = node.badge.as_ref().and_then(|b| b.tooltip.as_deref()) {
                             crate::render::draw_badge_tooltip(
                                 ctx,
                                 tip,
@@ -4478,15 +4431,10 @@ where
                 Some(HoverTarget::GroupBadge(ref group_id)) => {
                     let region = RegionId::GroupBadge(group_id.clone()).encode();
                     let rect = self.badge_rects.lock().unwrap().get(&region).copied();
-                    if let (Some(group), Some(rect)) = (
-                        frame.graph.groups.iter().find(|g| g.id == *group_id),
-                        rect,
-                    ) {
-                        if let Some(tip) = group
-                            .badge
-                            .as_ref()
-                            .and_then(|b| b.tooltip.as_deref())
-                        {
+                    if let (Some(group), Some(rect)) =
+                        (frame.graph.groups.iter().find(|g| g.id == *group_id), rect)
+                    {
+                        if let Some(tip) = group.badge.as_ref().and_then(|b| b.tooltip.as_deref()) {
                             crate::render::draw_badge_tooltip(
                                 ctx,
                                 tip,
@@ -4537,7 +4485,7 @@ where
         // re-added later doesn't inherit a stale height.
         {
             let live: HashSet<NodeId> = frame.graph.nodes.iter().map(|n| n.id.clone()).collect();
-            self.portals.lock().unwrap().retain(|id, _| live.contains(id));
+            self.portals.lock().unwrap().retain(|id| live.contains(id));
             self.portal_content_heights
                 .lock()
                 .unwrap()
@@ -4698,10 +4646,7 @@ fn resolve_port_point<K: PortKind, N>(
 /// Look up the host port-kind for the address by walking the
 /// template's input + output lists. Returns `None` if the node /
 /// template / port can't be resolved.
-fn lookup_port_kind<K, N, C, G>(
-    editor: &NodeEditor<K, N, C, G>,
-    addr: &PortAddress,
-) -> Option<K>
+fn lookup_port_kind<K, N, C, G>(editor: &NodeEditor<K, N, C, G>, addr: &PortAddress) -> Option<K>
 where
     K: PortKind,
     N: Send + Sync + 'static,
@@ -4740,7 +4685,6 @@ fn update_port_drag<K, N, C, G>(
     C: Send + Sync + 'static,
     G: Send + Sync + 'static,
 {
-
     // First tick: bring the FSM out of Idle.
     {
         let mut drag = editor.drag_state();
@@ -5006,12 +4950,9 @@ where
             explicit
         } else {
             let auto_bounds = if shift_held && before.as_ref() == Some(&group.id) {
-                match compute_group_auto_bounds_excluding(
-                    group,
-                    &graph.nodes,
-                    dragged,
-                    |n| editor.node_bounds_for(n, &theme),
-                ) {
+                match compute_group_auto_bounds_excluding(group, &graph.nodes, dragged, |n| {
+                    editor.node_bounds_for(n, &theme)
+                }) {
                     Some(b) => b,
                     None => continue,
                 }
@@ -5208,10 +5149,12 @@ fn update_drag_group_preview_for_group<K, N, C, G>(
                 let cy = node.position.y + h * 0.5;
                 let escapes = match region_bounds {
                     None => true,
-                    Some(b) => !(cx >= b.x()
-                        && cx <= b.x() + b.width()
-                        && cy >= b.y()
-                        && cy <= b.y() + b.height()),
+                    Some(b) => {
+                        !(cx >= b.x()
+                            && cx <= b.x() + b.width()
+                            && cy >= b.y()
+                            && cy <= b.y() + b.height())
+                    }
                 };
                 if escapes {
                     found = Some(parent_id.clone());
@@ -5389,12 +5332,9 @@ fn detect_group_drag_membership_changes<K, N, C, G>(
         let region_bounds: Option<Rect> = if let Some(explicit) = parent.bounds {
             Some(explicit)
         } else {
-            compute_group_auto_bounds_excluding_set(
-                parent,
-                &graph.nodes,
-                &dragged_members,
-                |n| editor.node_bounds_for(n, &theme),
-            )
+            compute_group_auto_bounds_excluding_set(parent, &graph.nodes, &dragged_members, |n| {
+                editor.node_bounds_for(n, &theme)
+            })
             .map(|auto_bounds| {
                 Rect::new(
                     auto_bounds.x() - pad,
@@ -5414,10 +5354,12 @@ fn detect_group_drag_membership_changes<K, N, C, G>(
             let cy = node.position.y + h * 0.5;
             let escapes = match region_bounds {
                 None => true,
-                Some(b) => !(cx >= b.x()
-                    && cx <= b.x() + b.width()
-                    && cy >= b.y()
-                    && cy <= b.y() + b.height()),
+                Some(b) => {
+                    !(cx >= b.x()
+                        && cx <= b.x() + b.width()
+                        && cy >= b.y()
+                        && cy <= b.y() + b.height())
+                }
             };
             if escapes {
                 to_remove.push(RemoveFromGroupRequest {
@@ -5482,65 +5424,103 @@ where
         kc: blinc_core::events::KeyCode,
         mods: blinc_core::events::Modifiers,
     ) -> bool {
-    if kc == blinc_core::events::KeyCode::ESCAPE {
-        // Reset the drag-to-connect FSM if a gesture is in flight.
-        // No-op otherwise so Esc stays available for higher-level
-        // host shortcuts (closing dialogs, deselecting, etc.).
-        let mut drag = self.drag_state();
-        if drag.is_active() {
-            drag.cancel();
-            self.drag_state.set(drag);
-            blinc_layout::request_redraw();
+        if kc == blinc_core::events::KeyCode::ESCAPE {
+            // Reset the drag-to-connect FSM if a gesture is in flight.
+            // No-op otherwise so Esc stays available for higher-level
+            // host shortcuts (closing dialogs, deselecting, etc.).
+            let mut drag = self.drag_state();
+            if drag.is_active() {
+                drag.cancel();
+                self.drag_state.set(drag);
+                blinc_layout::request_redraw();
+                return true;
+            }
+            return false;
+        }
+        let editor = self;
+        if (kc == blinc_core::events::KeyCode::DELETE
+            || kc == blinc_core::events::KeyCode::BACKSPACE)
+            && mods.shift()
+        {
+            // Snapshot selection ids by category — canvas-kit stores the
+            // prefixed region ids, so we split connection ids
+            // (`edge:{u64}`), node ids (`node:{str}`), and group ids
+            // (`group:{str}`) here. Each category fires its own event so
+            // the host can confirm independently (a destructive dialog
+            // per type, or skip entirely for groups via
+            // `EditorCommand::RemoveGroup`).
+            let sel = editor.kit.selection().selected;
+            let mut connection_ids: Vec<ConnectionId> = Vec::new();
+            let mut node_ids: Vec<NodeId> = Vec::new();
+            let mut group_ids: Vec<GroupId> = Vec::new();
+            for region in &sel {
+                match RegionId::parse(region) {
+                    Some(RegionId::Edge(id)) => connection_ids.push(id),
+                    Some(RegionId::Node(id)) => node_ids.push(id),
+                    Some(RegionId::Group(id)) => group_ids.push(id),
+                    _ => {}
+                }
+            }
+            for id in connection_ids {
+                editor.push_event(EditorEvent::DeleteConnectionRequested(id));
+            }
+            for id in group_ids {
+                editor.push_event(EditorEvent::DeleteGroupRequested(
+                    crate::group::DeleteGroupRequest { group: id },
+                ));
+            }
+            if !node_ids.is_empty() {
+                editor.push_event(EditorEvent::DeleteNodesRequested(node_ids));
+            }
             return true;
         }
-        return false;
-    }
-    let editor = self;
-    if (kc == blinc_core::events::KeyCode::DELETE
-        || kc == blinc_core::events::KeyCode::BACKSPACE)
-        && mods.shift()
-    {
-        // Snapshot selection ids by category — canvas-kit stores the
-        // prefixed region ids, so we split connection ids
-        // (`edge:{u64}`), node ids (`node:{str}`), and group ids
-        // (`group:{str}`) here. Each category fires its own event so
-        // the host can confirm independently (a destructive dialog
-        // per type, or skip entirely for groups via
-        // `EditorCommand::RemoveGroup`).
-        let sel = editor.kit.selection().selected;
-        let mut connection_ids: Vec<ConnectionId> = Vec::new();
-        let mut node_ids: Vec<NodeId> = Vec::new();
-        let mut group_ids: Vec<GroupId> = Vec::new();
-        for region in &sel {
-            match RegionId::parse(region) {
-                Some(RegionId::Edge(id)) => connection_ids.push(id),
-                Some(RegionId::Node(id)) => node_ids.push(id),
-                Some(RegionId::Group(id)) => group_ids.push(id),
-                _ => {}
+        // Cmd-/Ctrl- combinations route through host-defined events.
+        // Tested BEFORE the plain-D arm so Cmd-D doesn't fall through
+        // into the disable-toggle.
+        if mods.command() {
+            if kc == blinc_core::events::KeyCode::A {
+                editor.push_event(EditorEvent::SelectAllRequested);
+                return true;
+            }
+            if kc == blinc_core::events::KeyCode::D {
+                let sel = editor.kit.selection().selected;
+                let node_ids: Vec<NodeId> = sel
+                    .iter()
+                    .filter_map(|r| match RegionId::parse(r)? {
+                        RegionId::Node(id) => Some(id),
+                        _ => None,
+                    })
+                    .collect();
+                if !node_ids.is_empty() {
+                    editor.push_event(EditorEvent::DuplicateNodesRequested(node_ids));
+                }
+                return true;
+            }
+            if kc == blinc_core::events::KeyCode::Z {
+                if mods.shift() {
+                    editor.push_event(EditorEvent::RedoRequested);
+                } else {
+                    editor.push_event(EditorEvent::UndoRequested);
+                }
+                return true;
             }
         }
-        for id in connection_ids {
-            editor.push_event(EditorEvent::DeleteConnectionRequested(id));
-        }
-        for id in group_ids {
-            editor.push_event(EditorEvent::DeleteGroupRequested(
-                crate::group::DeleteGroupRequest { group: id },
-            ));
-        }
-        if !node_ids.is_empty() {
-            editor.push_event(EditorEvent::DeleteNodesRequested(node_ids));
-        }
-        return true;
-    }
-    // Cmd-/Ctrl- combinations route through host-defined events.
-    // Tested BEFORE the plain-D arm so Cmd-D doesn't fall through
-    // into the disable-toggle.
-    if mods.command() {
-        if kc == blinc_core::events::KeyCode::A {
-            editor.push_event(EditorEvent::SelectAllRequested);
-            return true;
-        }
-        if kc == blinc_core::events::KeyCode::D {
+        if kc == blinc_core::events::KeyCode::D && !mods.command() && mods.shift() {
+            // Toggle soft-disabled on every selected node + every
+            // selected group. The Shift modifier is required so plain
+            // `D` is released back to focused text widgets (search box,
+            // inline title editor, port-edit popovers) — otherwise the
+            // canvas-side disable toggle hijacks the keystroke before
+            // the input can receive it, and the user sees a missing
+            // character in the search box every time their query
+            // contains `D`. Same policy as Shift+Delete for destructive
+            // shortcuts (see the BACKSPACE / DELETE arm above).
+            //
+            // Mixed-state selections (some disabled, some not) all flip
+            // to disabled on the first press, then all enable on the
+            // next — the new state derives from the FIRST selected
+            // entity's current value (node first, then group) so the
+            // action stays deterministic regardless of selection order.
             let sel = editor.kit.selection().selected;
             let node_ids: Vec<NodeId> = sel
                 .iter()
@@ -5549,73 +5529,38 @@ where
                     _ => None,
                 })
                 .collect();
-            if !node_ids.is_empty() {
-                editor.push_event(EditorEvent::DuplicateNodesRequested(node_ids));
+            let group_ids: Vec<GroupId> = sel
+                .iter()
+                .filter_map(|r| match RegionId::parse(r)? {
+                    RegionId::Group(id) => Some(id),
+                    _ => None,
+                })
+                .collect();
+            if node_ids.is_empty() && group_ids.is_empty() {
+                return false;
+            }
+            let target_disabled = {
+                let g = editor.graph.read().unwrap();
+                let from_node = node_ids
+                    .first()
+                    .and_then(|id| g.nodes.iter().find(|n| n.id == *id).map(|n| n.disabled));
+                let from_group = group_ids.first().and_then(|id| {
+                    g.groups
+                        .iter()
+                        .find(|gg| gg.id == *id)
+                        .map(|gg| gg.disabled)
+                });
+                !from_node.or(from_group).unwrap_or(false)
+            };
+            for id in &node_ids {
+                editor.set_node_disabled(id, target_disabled);
+            }
+            for id in &group_ids {
+                editor.set_group_disabled(id, target_disabled);
             }
             return true;
         }
-        if kc == blinc_core::events::KeyCode::Z {
-            if mods.shift() {
-                editor.push_event(EditorEvent::RedoRequested);
-            } else {
-                editor.push_event(EditorEvent::UndoRequested);
-            }
-            return true;
-        }
-    }
-    if kc == blinc_core::events::KeyCode::D && !mods.command() && mods.shift() {
-        // Toggle soft-disabled on every selected node + every
-        // selected group. The Shift modifier is required so plain
-        // `D` is released back to focused text widgets (search box,
-        // inline title editor, port-edit popovers) — otherwise the
-        // canvas-side disable toggle hijacks the keystroke before
-        // the input can receive it, and the user sees a missing
-        // character in the search box every time their query
-        // contains `D`. Same policy as Shift+Delete for destructive
-        // shortcuts (see the BACKSPACE / DELETE arm above).
-        //
-        // Mixed-state selections (some disabled, some not) all flip
-        // to disabled on the first press, then all enable on the
-        // next — the new state derives from the FIRST selected
-        // entity's current value (node first, then group) so the
-        // action stays deterministic regardless of selection order.
-        let sel = editor.kit.selection().selected;
-        let node_ids: Vec<NodeId> = sel
-            .iter()
-            .filter_map(|r| match RegionId::parse(r)? {
-                RegionId::Node(id) => Some(id),
-                _ => None,
-            })
-            .collect();
-        let group_ids: Vec<GroupId> = sel
-            .iter()
-            .filter_map(|r| match RegionId::parse(r)? {
-                RegionId::Group(id) => Some(id),
-                _ => None,
-            })
-            .collect();
-        if node_ids.is_empty() && group_ids.is_empty() {
-            return false;
-        }
-        let target_disabled = {
-            let g = editor.graph.read().unwrap();
-            let from_node = node_ids
-                .first()
-                .and_then(|id| g.nodes.iter().find(|n| n.id == *id).map(|n| n.disabled));
-            let from_group = group_ids
-                .first()
-                .and_then(|id| g.groups.iter().find(|gg| gg.id == *id).map(|gg| gg.disabled));
-            !from_node.or(from_group).unwrap_or(false)
-        };
-        for id in &node_ids {
-            editor.set_node_disabled(id, target_disabled);
-        }
-        for id in &group_ids {
-            editor.set_group_disabled(id, target_disabled);
-        }
-        return true;
-    }
-    false
+        false
     }
 }
 
@@ -5880,7 +5825,10 @@ fn compute_align(snapshot: &[(NodeId, Rect)], edge: AlignEdge) -> Vec<(NodeId, P
         return Vec::new();
     }
     let target = match edge {
-        AlignEdge::Left => snapshot.iter().map(|(_, b)| b.x()).fold(f32::INFINITY, f32::min),
+        AlignEdge::Left => snapshot
+            .iter()
+            .map(|(_, b)| b.x())
+            .fold(f32::INFINITY, f32::min),
         AlignEdge::Right => snapshot
             .iter()
             .map(|(_, b)| b.x() + b.width())
@@ -5889,7 +5837,10 @@ fn compute_align(snapshot: &[(NodeId, Rect)], edge: AlignEdge) -> Vec<(NodeId, P
             let sum: f32 = snapshot.iter().map(|(_, b)| b.x() + b.width() * 0.5).sum();
             sum / snapshot.len() as f32
         }
-        AlignEdge::Top => snapshot.iter().map(|(_, b)| b.y()).fold(f32::INFINITY, f32::min),
+        AlignEdge::Top => snapshot
+            .iter()
+            .map(|(_, b)| b.y())
+            .fold(f32::INFINITY, f32::min),
         AlignEdge::Bottom => snapshot
             .iter()
             .map(|(_, b)| b.y() + b.height())
@@ -5916,10 +5867,7 @@ fn compute_align(snapshot: &[(NodeId, Rect)], edge: AlignEdge) -> Vec<(NodeId, P
 }
 
 /// Pure helper for `distribute_nodes` — see [`compute_align`].
-fn compute_distribute(
-    snapshot: &[(NodeId, Rect)],
-    axis: DistributeAxis,
-) -> Vec<(NodeId, Point)> {
+fn compute_distribute(snapshot: &[(NodeId, Rect)], axis: DistributeAxis) -> Vec<(NodeId, Point)> {
     if snapshot.len() < 3 {
         return Vec::new();
     }
@@ -5929,7 +5877,9 @@ fn compute_distribute(
             DistributeAxis::Horizontal => r.x() + r.width() * 0.5,
             DistributeAxis::Vertical => r.y() + r.height() * 0.5,
         };
-        key(&a.1).partial_cmp(&key(&b.1)).unwrap_or(std::cmp::Ordering::Equal)
+        key(&a.1)
+            .partial_cmp(&key(&b.1))
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     let centre = |r: &Rect| match axis {
         DistributeAxis::Horizontal => r.x() + r.width() * 0.5,
@@ -6054,7 +6004,10 @@ mod tests {
 
     #[test]
     fn align_left_pulls_all_to_leftmost_x() {
-        let snap = vec![n("a", 10.0, 0.0, 50.0, 50.0), n("b", 30.0, 100.0, 80.0, 40.0)];
+        let snap = vec![
+            n("a", 10.0, 0.0, 50.0, 50.0),
+            n("b", 30.0, 100.0, 80.0, 40.0),
+        ];
         let out = compute_align(&snap, AlignEdge::Left);
         assert_eq!(out[0].1.x, 10.0);
         assert_eq!(out[1].1.x, 10.0);
@@ -6062,7 +6015,10 @@ mod tests {
 
     #[test]
     fn align_right_pushes_all_to_rightmost_edge() {
-        let snap = vec![n("a", 10.0, 0.0, 50.0, 50.0), n("b", 30.0, 100.0, 80.0, 40.0)];
+        let snap = vec![
+            n("a", 10.0, 0.0, 50.0, 50.0),
+            n("b", 30.0, 100.0, 80.0, 40.0),
+        ];
         let out = compute_align(&snap, AlignEdge::Right);
         // Right-most edge in the snapshot: 30 + 80 = 110.
         // `a` width 50 → x = 60; `b` width 80 → x = 30 (unchanged).
@@ -6097,9 +6053,9 @@ mod tests {
     fn distribute_horizontal_spaces_interior_evenly() {
         // Anchors at x_centre 25 and 175; middle at (25+175)/2 = 100.
         let snap = vec![
-            n("a", 0.0, 0.0, 50.0, 50.0),       // centre 25
-            n("b", 75.0, 0.0, 30.0, 50.0),      // centre 90  — should move to 100
-            n("c", 150.0, 0.0, 50.0, 50.0),     // centre 175
+            n("a", 0.0, 0.0, 50.0, 50.0),   // centre 25
+            n("b", 75.0, 0.0, 30.0, 50.0),  // centre 90  — should move to 100
+            n("c", 150.0, 0.0, 50.0, 50.0), // centre 175
         ];
         let out = compute_distribute(&snap, DistributeAxis::Horizontal);
         assert_eq!(out.len(), 1, "only interior nodes move");

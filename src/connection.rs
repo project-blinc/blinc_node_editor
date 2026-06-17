@@ -136,17 +136,27 @@ pub enum ValidationOutcome {
     Accept,
     /// Reject with a human-readable reason. Shown as a tooltip on the
     /// drag-preview cursor; the editor doesn't materialise the edge.
-    Reject { reason: String },
+    Reject {
+        reason: String,
+    },
 }
 
 impl From<bool> for ValidationOutcome {
     fn from(b: bool) -> Self {
-        if b { Self::Accept } else { Self::Reject { reason: String::new() } }
+        if b {
+            Self::Accept
+        } else {
+            Self::Reject {
+                reason: String::new(),
+            }
+        }
     }
 }
 
 impl ValidationOutcome {
-    pub fn is_accept(&self) -> bool { matches!(self, Self::Accept) }
+    pub fn is_accept(&self) -> bool {
+        matches!(self, Self::Accept)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────
