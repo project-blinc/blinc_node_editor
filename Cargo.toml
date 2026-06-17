@@ -61,7 +61,7 @@ blinc_canvas_kit = { git = "https://github.com/project-blinc/blinc_canvas_kit.gi
 # (`github.com/project-blinc/blinc_portal_ui`); the [patch] block
 # below redirects to the colocated checkout under
 # `../blinc_portal_ui` for source-local development.
-blinc_portal_ui  = { git = "https://github.com/project-blinc/blinc_portal_ui.git", rev = "3fef94453d1f87dec281d031ba414955f1c0ef1a" }
+blinc_portal_ui  = { git = "https://github.com/project-blinc/blinc_portal_ui.git", rev = "d8f1f760eb058fdbf822ba16ecee9e23c0c0a066" }
 
 # Cross-target monotonic clock for edge-flow animation timing (same
 # rationale as canvas-kit's sketch layer: std::time::Instant panics on
