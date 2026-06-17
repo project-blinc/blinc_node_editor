@@ -1,0 +1,134 @@
+[package]
+name = "blinc_node_editor"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Metadata-driven node-graph editor toolkit over blinc_canvas_kit: typed ports, bezier connectors, drag-to-connect, port-type matching, auto-layout, blinc_theme-aware. Generic over the host's port-type and metadata — any DAG editor can drive it."
+repository = "https://github.com/project-blinc/blinc_node_editor"
+readme = "README.md"
+documentation = "https://docs.rs/blinc_node_editor"
+rust-version = "1.75"
+keywords = ["ui", "gui", "node-graph", "editor", "dataflow"]
+categories = ["gui", "visualization"]
+
+# Standalone package — not a member of the Blinc workspace. Lives under
+# `/packages/` (gitignored + workspace-excluded), mirroring the
+# `blinc_canvas_kit` pattern. The node-graph layer canvas-kit's
+# BACKLOG explicitly defers to this crate — bezier connectors, port
+# matching, drag-to-connect, auto-layout — built on top of canvas-kit's
+# proven viewport / hit-testing / selection.
+#
+# **Metadata-driven, NOT opinionated.** Generic over the host's
+# port-type (`PortKind` trait) and node metadata (`M`). reflow plugs
+# in by impl'ing `PortKind` for its `PortType`; nan8 wires reflow's
+# `GraphExport` to this editor's `NodeInstance` / `Connection` types.
+# Any other DAG runtime can do the same.
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+# Blinc upstreams — pinned to the SAME git rev as blinc_canvas_kit so
+# the two unify in a consumer's dep graph. Consumers developing against
+# a local Blinc checkout add a [patch] table to their workspace root.
+# This crate's own [patch] block below is for source-local-to-Blinc
+# development only (see DIRECTIVE.md §8); ignore it when consuming the
+# crate from outside the Blinc tree.
+blinc_core   = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b80ad21e6abeed3a1eb4b62af1d8ad6a05" }
+# Pull `TickCallbackId` for the viewport-tween scheduler hook.
+# blinc_layout already re-exports SchedulerHandle / Easing, but not
+# the slotmap-typed callback id, so we depend on blinc_animation
+# directly. Same git rev as the other Blinc upstreams keeps the
+# downstream dep graph unified.
+blinc_animation = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b80ad21e6abeed3a1eb4b62af1d8ad6a05" }
+blinc_layout = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b80ad21e6abeed3a1eb4b62af1d8ad6a05" }
+blinc_theme  = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b80ad21e6abeed3a1eb4b62af1d8ad6a05" }
+# SVG parser + path renderer. Used by `NodeIcon` so hosts can ship
+# any SVG (tabler, lucide, custom) and have the editor draw it in
+# the node header via `SvgDocument::render_fit`. Works inside
+# canvas closures because it uses `fill_path` / `stroke_path` —
+# unlike the in-canvas `draw_text` path which is currently broken.
+blinc_svg    = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b80ad21e6abeed3a1eb4b62af1d8ad6a05" }
+
+# The canvas substrate this crate is layered on. Lives in its own
+# repo (`github.com/project-blinc/blinc_canvas_kit`); the [patch]
+# block below redirects to the colocated checkout under
+# `../blinc_canvas_kit` for source-local development.
+blinc_canvas_kit = { git = "https://github.com/project-blinc/blinc_canvas_kit.git", rev = "d07badb7d060dff63647a3afb46a5b58fd8a499e" }
+
+# Immediate-mode widget toolkit used to render `NodeTemplate::with_content`
+# closures inside node bodies. Lives in its own repo
+# (`github.com/project-blinc/blinc_portal_ui`); the [patch] block
+# below redirects to the colocated checkout under
+# `../blinc_portal_ui` for source-local development.
+blinc_portal_ui  = { git = "https://github.com/project-blinc/blinc_portal_ui.git", rev = "514c68eac969f08b50d0e3961c0855117093322c" }
+
+# Cross-target monotonic clock for edge-flow animation timing (same
+# rationale as canvas-kit's sketch layer: std::time::Instant panics on
+# wasm32). Wall-clock `t` / `dt` available on every target.
+web-time = "1.1"
+
+# Stable hash for content-derived ConnectionId. ahash is non-cryptographic
+# and fast.
+ahash = "0.8"
+
+# Diagnostic logging for membership-classification + drag debugging.
+# `tracing` is the workspace convention (see Blinc CLAUDE.md guidance).
+tracing = "0.1"
+
+# Metadata bags on PortMetadata / NodeTemplate / NodeInstance are
+# `serde_json::Value` so any host metadata shape round-trips through
+# the editor without the editor needing to know its schema.
+serde_json = "1.0"
+
+# Parallelises the off-render node + group interior layout pass via
+# `par_iter` in `slot::warm_slot_cache`. Each rayon worker constructs
+# its own `blinc_layout::LayoutTree`, runs `compute_layout`, and
+# emits a `NodeSlots`. The cache merge happens under one write lock.
+# Below a threshold (~32 uncached fingerprints) the warm path falls
+# back to serial — rayon's setup cost otherwise outweighs the win.
+rayon = "1"
+
+# taffy is already pulled in transitively via blinc_layout; this
+# direct dep lets `slot.rs` construct `Style` / `AvailableSpace`
+# values without re-exporting them from blinc_layout. Pinned to
+# match blinc_layout's exact version — without this match,
+# LayoutTree::create_node would reject our `Style` as the wrong
+# taffy version.
+taffy = "0.6"
+
+# Force-pin wgpu-hal to 26.0.5 to match the Blinc workspace's pin —
+# blinc_gpu's `wgpu-hal = "=26.0.5"` would otherwise conflict with
+# canvas_kit's `wgpu = "=26.0.1"` (which transitively wants the latest
+# 26.0.x ≥ 26.0.6). Mirrors what Blinc workspace Cargo.toml does, but
+# at the manifest level since this crate has no workspace. See the
+# `gotcha-wgpu-hal-26-0-6-acquire-regression` memory for why we
+# need 26.0.5 specifically.
+wgpu-hal = "=26.0.5"
+
+# ----- LOCAL DEVELOPMENT ONLY -----
+# When this crate is being developed source-local to Blinc, redirect the
+# git-pinned upstreams to the local checkout (mirrors what consumers do
+# in their workspace root per DIRECTIVE.md §8). Without this, the pinned
+# rev resolves to an older snapshot of blinc_layout whose API has since
+# moved on, and blinc_canvas_kit's `capture_input` call fails.
+#
+# DO NOT remove these lines without confirming the pinned rev still
+# matches main; canvas-kit's git rev would need to advance in lockstep.
+[patch."https://github.com/project-blinc/Blinc.git"]
+blinc_core   = { path = "../../crates/blinc_core" }
+blinc_animation = { path = "../../crates/blinc_animation" }
+blinc_layout = { path = "../../crates/blinc_layout" }
+blinc_theme  = { path = "../../crates/blinc_theme" }
+blinc_svg    = { path = "../../crates/blinc_svg" }
+# blinc_canvas_kit pulls blinc_gpu transitively at the same git rev;
+# patch it too so its `ClipShape` matches the patched blinc_layout's.
+blinc_gpu    = { path = "../../crates/blinc_gpu" }
+
+# Sibling crates that moved to their own repos — redirect git deps to
+# the colocated checkouts for source-local development.
+[patch."https://github.com/project-blinc/blinc_canvas_kit.git"]
+blinc_canvas_kit = { path = "../blinc_canvas_kit" }
+
+[patch."https://github.com/project-blinc/blinc_portal_ui.git"]
+blinc_portal_ui = { path = "../blinc_portal_ui" }
