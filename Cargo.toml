@@ -34,34 +34,34 @@ crate-type = ["lib"]
 # This crate's own [patch] block below is for source-local-to-Blinc
 # development only (see DIRECTIVE.md §8); ignore it when consuming the
 # crate from outside the Blinc tree.
-blinc_core   = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b80ad21e6abeed3a1eb4b62af1d8ad6a05" }
+blinc_core   = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b8e949d40a0012612b5880e89934ef69de" }
 # Pull `TickCallbackId` for the viewport-tween scheduler hook.
 # blinc_layout already re-exports SchedulerHandle / Easing, but not
 # the slotmap-typed callback id, so we depend on blinc_animation
 # directly. Same git rev as the other Blinc upstreams keeps the
 # downstream dep graph unified.
-blinc_animation = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b80ad21e6abeed3a1eb4b62af1d8ad6a05" }
-blinc_layout = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b80ad21e6abeed3a1eb4b62af1d8ad6a05" }
-blinc_theme  = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b80ad21e6abeed3a1eb4b62af1d8ad6a05" }
+blinc_animation = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b8e949d40a0012612b5880e89934ef69de" }
+blinc_layout = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b8e949d40a0012612b5880e89934ef69de" }
+blinc_theme  = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b8e949d40a0012612b5880e89934ef69de" }
 # SVG parser + path renderer. Used by `NodeIcon` so hosts can ship
 # any SVG (tabler, lucide, custom) and have the editor draw it in
 # the node header via `SvgDocument::render_fit`. Works inside
 # canvas closures because it uses `fill_path` / `stroke_path` —
 # unlike the in-canvas `draw_text` path which is currently broken.
-blinc_svg    = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b80ad21e6abeed3a1eb4b62af1d8ad6a05" }
+blinc_svg    = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b8e949d40a0012612b5880e89934ef69de" }
 
 # The canvas substrate this crate is layered on. Lives in its own
 # repo (`github.com/project-blinc/blinc_canvas_kit`); the [patch]
 # block below redirects to the colocated checkout under
 # `../blinc_canvas_kit` for source-local development.
-blinc_canvas_kit = { git = "https://github.com/project-blinc/blinc_canvas_kit.git", rev = "fddde0be63ab8c78c645582bed80aa08aa63886a" }
+blinc_canvas_kit = { git = "https://github.com/project-blinc/blinc_canvas_kit.git", rev = "3bc3f570dbe16e8f72c892e9fbad64cb7cd9af95" }
 
 # Immediate-mode widget toolkit used to render `NodeTemplate::with_content`
 # closures inside node bodies. Lives in its own repo
 # (`github.com/project-blinc/blinc_portal_ui`); the [patch] block
 # below redirects to the colocated checkout under
 # `../blinc_portal_ui` for source-local development.
-blinc_portal_ui  = { git = "https://github.com/project-blinc/blinc_portal_ui.git", rev = "ce2436864c48f8411fd3bb3a276d9e301c47cd07" }
+blinc_portal_ui  = { git = "https://github.com/project-blinc/blinc_portal_ui.git", rev = "e3fdf53889218aea54590a4581c5733986b97086" }
 
 # Cross-target monotonic clock for edge-flow animation timing (same
 # rationale as canvas-kit's sketch layer: std::time::Instant panics on
