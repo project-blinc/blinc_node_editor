@@ -34,7 +34,7 @@ impl ConnectionId {
 // ─────────────────────────────────────────────────────────────────────
 
 /// Runtime / lifecycle state of a connection, driving its colour
-/// + animation in the renderer. Borrowed from Zeal's
+/// and animation in the renderer. Borrowed from Zeal's
 /// `ConnectionState` — the at-a-glance green / red / pulsing
 /// distinction is core UX. Hosts update this from their runtime
 /// observability layer (for nan8 + reflow this comes from the

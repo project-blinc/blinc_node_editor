@@ -69,6 +69,7 @@ pub const DEFAULT_CAP: usize = 100;
 ///   (preset libraries, project files, selection metadata, …). Push
 ///   the transaction with [`History::push_transaction`].
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)] // EditorCommand payloads dominate; boxing would force allocs on every history push (drag-coalesced UpdateNodePosition is hot)
 pub enum HistoryEntry<K: PortKind, N: Clone, C: Clone, G: Clone> {
     /// Symmetric [`EditorCommand`] pair. The undo path clones
     /// `inverse` and feeds it to [`NodeEditor::dispatch`]; redo does
@@ -105,7 +106,7 @@ where
     /// variant).
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Command { label, .. } | Self::Transaction { label, .. } => *label,
+            Self::Command { label, .. } | Self::Transaction { label, .. } => label,
         }
     }
 }

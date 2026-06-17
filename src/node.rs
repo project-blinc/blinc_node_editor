@@ -119,6 +119,7 @@ pub struct NodeContent {
     /// Per-frame UI closure. Receives the node id (for per-instance
     /// signal / state lookup) and a portal-ui builder; emit widgets
     /// or call `ui.allocate_painter(...)` for free-form painting.
+    #[allow(clippy::type_complexity)]
     pub render: Arc<dyn Fn(&NodeId, &mut blinc_portal_ui::PortalUi) + Send + Sync>,
 }
 

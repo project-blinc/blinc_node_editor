@@ -383,9 +383,9 @@ fn nudge_duplicates(positions: &mut [(f32, f32)]) {
 ///   centre-distance based; the radii scale the magnitude linearly
 ///   so larger nodes / super-nodes hold a proportionally wider
 ///   neighbourhood.
-/// * **Attraction** — each edge's rest length is `ideal_edge_length
-///   + r_u + r_v` so connected nodes settle with the configured gap
-///   regardless of node size.
+/// * **Attraction** — each edge's rest length is
+///   `ideal_edge_length + r_u + r_v` so connected nodes settle with
+///   the configured gap regardless of node size.
 /// * **Centroid attraction** (optional) — when `centroid_pull > 0`,
 ///   every node gets a linear Hooke pull toward the population
 ///   centroid. This is the "phase-1 cohesion" force the hierarchical
@@ -973,8 +973,8 @@ fn layered_kernel(
     }
     let mut layer: Vec<i32> = vec![0; n];
     let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
-    for i in 0..n {
-        if in_deg[i] == 0 {
+    for (i, &deg) in in_deg.iter().enumerate() {
+        if deg == 0 {
             queue.push_back(i);
         }
     }
@@ -1477,11 +1477,11 @@ mod tests {
         let mut min_y = f32::INFINITY;
         let mut max_x = f32::NEG_INFINITY;
         let mut max_y = f32::NEG_INFINITY;
-        for i in 0..3 {
-            min_x = min_x.min(positions[i].x - NODE_HALF);
-            min_y = min_y.min(positions[i].y - NODE_HALF);
-            max_x = max_x.max(positions[i].x + NODE_HALF);
-            max_y = max_y.max(positions[i].y + NODE_HALF);
+        for p in positions.iter().take(3) {
+            min_x = min_x.min(p.x - NODE_HALF);
+            min_y = min_y.min(p.y - NODE_HALF);
+            max_x = max_x.max(p.x + NODE_HALF);
+            max_y = max_y.max(p.y + NODE_HALF);
         }
         // Members inside their own bbox is trivially true; the
         // interesting assertion is that the non-member sits
@@ -1720,11 +1720,11 @@ mod tests {
         const NODE_HALF_H: f32 = 36.0;
         let (mut min_x, mut min_y) = (f32::INFINITY, f32::INFINITY);
         let (mut max_x, mut max_y) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
-        for i in 0..3 {
-            min_x = min_x.min(positions[i].x - NODE_HALF_W);
-            min_y = min_y.min(positions[i].y - NODE_HALF_H);
-            max_x = max_x.max(positions[i].x + NODE_HALF_W);
-            max_y = max_y.max(positions[i].y + NODE_HALF_H);
+        for p in positions.iter().take(3) {
+            min_x = min_x.min(p.x - NODE_HALF_W);
+            min_y = min_y.min(p.y - NODE_HALF_H);
+            max_x = max_x.max(p.x + NODE_HALF_W);
+            max_y = max_y.max(p.y + NODE_HALF_H);
         }
         let d = positions[3];
         let inside = d.x >= min_x && d.x <= max_x && d.y >= min_y && d.y <= max_y;

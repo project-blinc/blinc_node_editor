@@ -1,9 +1,9 @@
 //! Rendering primitives — node bodies, ports, edges, groups, badges.
 //!
-//! All drawing routines are pure functions over `&mut dyn DrawContext`
-//! + the resolved [`ThemeResolver`]. The editor's canvas closure
-//! drives them in order: groups (back) → edges → nodes → drag preview
-//! → boundary chrome (front).
+//! All drawing routines are pure functions over
+//! `&mut dyn DrawContext` plus the resolved [`ThemeResolver`]. The
+//! editor's canvas closure drives them in back-to-front order:
+//! groups, edges, nodes, drag preview, boundary chrome.
 //!
 //! ## Coordinate space
 //!
@@ -314,6 +314,7 @@ pub fn draw_node<K: PortKind, M>(
 /// - apply group-inherited disable state — `disabled` may be true
 ///   even when `instance.disabled` is false because the node is a
 ///   member of a disabled group.
+#[allow(clippy::too_many_arguments)] // intrinsic to the per-node paint surface
 pub fn draw_node_at<K: PortKind, M>(
     ctx: &mut dyn DrawContext,
     instance: &NodeInstance<M>,
@@ -993,6 +994,7 @@ pub enum PortHoverState {
 ///
 /// Pass `0.0` to disable motion (host rendering a snapshot, no
 /// per-frame tick).
+#[allow(clippy::too_many_arguments)] // intrinsic to the edge paint surface
 pub fn draw_edge<M>(
     ctx: &mut dyn DrawContext,
     conn: &Connection<M>,
@@ -1011,6 +1013,7 @@ pub fn draw_edge<M>(
 /// node to `Pending` regardless of the connection's own state — that
 /// gives the disabled-node halo a consistent "broken dataflow" cue
 /// without mutating the underlying [`Connection`].
+#[allow(clippy::too_many_arguments)] // intrinsic to the edge paint surface
 pub fn draw_edge_with_state(
     ctx: &mut dyn DrawContext,
     state: ConnectionState,
@@ -1573,9 +1576,10 @@ fn chrome_glyph_doc(glyph: ChromeGlyph, stroke: Color) -> Arc<blinc_svg::SvgDocu
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
 
-    static CACHE: OnceLock<
-        Mutex<HashMap<(ChromeGlyph, [u8; 3]), Arc<blinc_svg::SvgDocument>>>,
-    > = OnceLock::new();
+    // (glyph kind, quantised stroke RGB)
+    type CacheKey = (ChromeGlyph, [u8; 3]);
+    type ChromeCache = HashMap<CacheKey, Arc<blinc_svg::SvgDocument>>;
+    static CACHE: OnceLock<Mutex<ChromeCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
     let rgb = [

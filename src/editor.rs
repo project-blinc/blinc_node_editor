@@ -366,6 +366,7 @@ pub struct NodeEditor<K: PortKind, N, C, G> {
     /// `Some(id)`. The typical handler fetches the subgraph via
     /// [`Self::subgraph`] and calls [`Self::set_graph`] with its
     /// contents.
+    #[allow(clippy::type_complexity)]
     subgraphs: Arc<RwLock<AHashMap<crate::subgraph::SubgraphId, crate::subgraph::Subgraph<K, N, C, G>>>>,
 
     /// Monotonic counter bumped on every subgraph CRUD — used by
@@ -1597,7 +1598,7 @@ where
         // math. Using `NodeEditorTheme::default()` here under-fits
         // when the host enlarged nodes via `with_theme(...)`.
         let theme_overrides = self.theme.read().unwrap();
-        let resolver = ThemeResolver::new(&*theme_overrides);
+        let resolver = ThemeResolver::new(&theme_overrides);
         let Some(bounds) = self.union_of_nodes(|_| true, &resolver) else {
             return;
         };
@@ -1614,7 +1615,7 @@ where
         }
         // Same live-theme rationale as `zoom_to_fit`.
         let theme_overrides = self.theme.read().unwrap();
-        let resolver = ThemeResolver::new(&*theme_overrides);
+        let resolver = ThemeResolver::new(&theme_overrides);
         let Some(bounds) = self.union_of_nodes(|id| selected.contains(id), &resolver) else {
             return;
         };
@@ -1834,7 +1835,7 @@ where
         //                      tighter view than they had.
         if !zoom_node_ids.is_empty() {
             let theme_overrides = self.theme.read().unwrap();
-            let resolver = ThemeResolver::new(&*theme_overrides);
+            let resolver = ThemeResolver::new(&theme_overrides);
             if let Some(bounds) = self.union_of_nodes(|id| zoom_node_ids.contains(id), &resolver) {
                 drop(theme_overrides);
                 if zoom_node_ids.len() == 1 {
@@ -1871,7 +1872,7 @@ where
             return;
         }
         let theme_overrides = self.theme.read().unwrap();
-        let resolver = ThemeResolver::new(&*theme_overrides);
+        let resolver = ThemeResolver::new(&theme_overrides);
         let Some(bounds) = self.union_of_nodes(|nid| members.contains(nid), &resolver) else {
             return;
         };
@@ -2031,10 +2032,10 @@ where
     }
 
     /// Flip a node's soft-disabled state. The renderer dims the node
-    /// + downgrades every incident edge to `Pending` style; no other
-    /// editor state changes. Hosts typically wire this to a 'D' key
-    /// or a context-menu entry. Bumps the graph revision so signal
-    /// observers see the change.
+    /// and downgrades every incident edge to `Pending` style; no
+    /// other editor state changes. Hosts typically wire this to a
+    /// 'D' key or a context-menu entry. Bumps the graph revision
+    /// so signal observers see the change.
     pub fn set_node_disabled(&self, id: &NodeId, disabled: bool) {
         let changed = {
             let mut g = self.graph.write().unwrap();
@@ -2147,7 +2148,7 @@ where
             return;
         }
         let theme_overrides = self.theme.read().unwrap();
-        let theme = ThemeResolver::new(&*theme_overrides);
+        let theme = ThemeResolver::new(&theme_overrides);
         // Snapshot bounds + positions before any mutation so the
         // alignment target doesn't drift as we move nodes one at a
         // time.
@@ -2178,7 +2179,7 @@ where
             return;
         }
         let theme_overrides = self.theme.read().unwrap();
-        let theme = ThemeResolver::new(&*theme_overrides);
+        let theme = ThemeResolver::new(&theme_overrides);
         let snapshot: Vec<(NodeId, Rect)> = {
             let graph = self.graph.read().unwrap();
             graph
@@ -2218,6 +2219,7 @@ where
     /// its internal graph, so its state is the new source of truth).
     /// Allocates — clone the vectors out. For hot-path reads,
     /// subscribe to [`Self::graph_signal`] instead.
+    #[allow(clippy::type_complexity)]
     pub fn graph_snapshot(
         &self,
     ) -> (
@@ -2570,7 +2572,7 @@ where
     /// theme overrides or other out-of-band invalidations.
     pub fn warm_slot_cache(&self) {
         let theme_overrides = self.theme.read().unwrap();
-        let theme = ThemeResolver::new(&*theme_overrides);
+        let theme = ThemeResolver::new(&theme_overrides);
         let theme_rev = self.theme_revision.load(Ordering::Relaxed);
         let graph = self.graph.read().unwrap();
         let templates = self.templates.read().unwrap();
@@ -2620,26 +2622,24 @@ where
         drop(theme_overrides);
 
         warm_node_slot_cache(&self.node_slots, &node_wanted, |fp| {
-            node_inputs_by_fp.get(&fp).cloned().unwrap_or_else(|| {
-                // Defensive: a stale fingerprint shouldn't reach this
-                // path, but fall back to a zero-size compute so the
-                // warm never panics.
-                crate::slot::NodeSlotInputs {
-                    width: 0.0,
-                    has_subtitle: false,
-                    has_badge: false,
-                    has_icon: false,
-                    icon_size: 16.0,
-                    title_font_size: 13.0,
-                    subtitle_font_size: 11.0,
-                    content_padding: 10.0,
-                    content_height: 0.0,
-                }
+            // Defensive: a stale fingerprint shouldn't reach this
+            // path, but fall back to a zero-size compute so the
+            // warm never panics.
+            node_inputs_by_fp.get(&fp).cloned().unwrap_or(crate::slot::NodeSlotInputs {
+                width: 0.0,
+                has_subtitle: false,
+                has_badge: false,
+                has_icon: false,
+                icon_size: 16.0,
+                title_font_size: 13.0,
+                subtitle_font_size: 11.0,
+                content_padding: 10.0,
+                content_height: 0.0,
             })
         });
 
         warm_group_slot_cache(&self.group_slots, &group_wanted, |fp| {
-            group_inputs_by_fp.get(&fp).cloned().unwrap_or_else(|| crate::slot::GroupSlotInputs {
+            group_inputs_by_fp.get(&fp).cloned().unwrap_or(crate::slot::GroupSlotInputs {
                 width: 0.0,
                 header_height: 28.0,
                 has_description: false,
@@ -2721,7 +2721,7 @@ where
     pub fn apply_layout(&self) {
         let graph = self.graph.read().unwrap();
         let strategy = self.layout_strategy.read().unwrap();
-        let positions = apply_layout(&*strategy, &graph.nodes, &graph.connections, &graph.groups);
+        let positions = apply_layout(&strategy, &graph.nodes, &graph.connections, &graph.groups);
         drop(strategy);
 
         let updates: Vec<(NodeId, Point)> = graph
@@ -3040,7 +3040,6 @@ where
                     });
                 }
                 blinc_layout::request_redraw();
-                return;
             }
         });
 
@@ -3300,7 +3299,7 @@ where
     /// from their own draw closure.
     pub fn render_frame(&self, ctx: &mut dyn DrawContext) {
         let frame = self.begin_frame();
-        let theme = ThemeResolver::new(&*frame.theme_overrides);
+        let theme = ThemeResolver::new(&frame.theme_overrides);
 
         // Snapshot the live drag-preview state once for this frame
         // so each group iteration reads a consistent view (the per-
@@ -4097,9 +4096,7 @@ where
                     let Some(rect) = collapsed_group_rects.get(g) else {
                         continue;
                     };
-                    let anchor = Some(from_pt).unwrap_or_else(|| {
-                        Point::new(rect.x() + rect.width() * 0.5, rect.y() - 20.0)
-                    });
+                    let anchor = from_pt;
                     closest_point_on_rect(*rect, anchor)
                 }
                 (None, None, Some(node_id)) => {
@@ -4969,6 +4966,7 @@ fn apply_drag_delta<K, N, C, G>(
 ///   (the node's own contribution to auto-fit is excluded), giving
 ///   the user an explicit escape gesture. Cross-group moves emit
 ///   both legs so hosts can audit each side independently.
+///
 /// Compute the dragged node's "before" / "after" group membership for
 /// the live position. Shared between drag-end (event firing) and per-
 /// frame drag (preview tinting). Returns `(before, after,
@@ -5000,7 +4998,7 @@ where
         (node.position.x + w * 0.5, node.position.y + h * 0.5)
     };
     let theme_overrides = editor.theme.read().unwrap();
-    let theme = ThemeResolver::new(&*theme_overrides);
+    let theme = ThemeResolver::new(&theme_overrides);
     let pad = theme.group_padding();
     let mut hit: Option<GroupId> = None;
     for group in &graph.groups {
@@ -5175,7 +5173,7 @@ fn update_drag_group_preview_for_group<K, N, C, G>(
     let remove_target: Option<GroupId> = if shift_held {
         let graph = editor.graph.read().unwrap();
         let theme_overrides = editor.theme.read().unwrap();
-        let theme = ThemeResolver::new(&*theme_overrides);
+        let theme = ThemeResolver::new(&theme_overrides);
         let pad = theme.group_padding();
         let header_h_fallback = 28.0;
         let mut found: Option<GroupId> = None;
@@ -5373,7 +5371,7 @@ fn detect_group_drag_membership_changes<K, N, C, G>(
     }
 
     let theme_overrides = editor.theme.read().unwrap();
-    let theme = ThemeResolver::new(&*theme_overrides);
+    let theme = ThemeResolver::new(&theme_overrides);
     let pad = theme.group_padding();
     let header_h_fallback = 28.0;
 

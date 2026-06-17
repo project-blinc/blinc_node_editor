@@ -341,6 +341,7 @@ pub enum EditorEvent<K: PortKind> {
 /// `dispatch` from any of them — all mutations route through the
 /// editor's internal locks.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // SetGraph / RestoreSubgraph dominate the size; boxing the heavy variants would force allocs on every command dispatch (drag-coalesced UpdateNodePosition is hot)
 pub enum EditorCommand<K: PortKind, N, C, G> {
     // ── Graph mutations ─────────────────────────────────────────────
     InsertNode(NodeInstance<N>),
