@@ -6,6 +6,9 @@ connect, immediate-mode content widgets inside node bodies, group
 chrome, theme-aware rendering, frustum-culled paint, and a
 signal + event API designed for reactive Blinc hosts.
 
+
+<img  alt="Blinc Node Editor" src="blinc_node_editor_ui.png" />
+
 The crate is generic over the host's port-type (`PortKind`) + per-
 node / per-connection / per-group metadata (`<K, N, C, G>`). It
 exposes a graph view; the host owns the authoritative graph state
@@ -49,7 +52,7 @@ editor.set_graph(nodes, connections, groups, exposed);
 editor.element() // a Div the host mounts inside a full-screen Stateful
 ```
 
-See [`examples/blinc_app_examples/examples/node_editor_demo.rs`](../../examples/blinc_app_examples/examples/node_editor_demo.rs)
+See [`examples/blinc_app_examples/examples/node_editor_demo.rs`](https://github.com/project-blinc/Blinc/blob/main/examples/blinc_app_examples/examples/node_editor_demo.rs)
 in the Blinc workspace for a working setup wired to a `HostGraph`.
 
 ## Two design principles

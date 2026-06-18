@@ -50,6 +50,17 @@ pub struct NodeEditorTheme {
     pub node_body_fill: Option<Color>,
     pub node_body_stroke: Option<Color>,
     pub node_header_fill: Option<Color>,
+    /// Override the fill used for a node's content-slot inset. By
+    /// default the slot pulls `ColorToken::Background` so the slot
+    /// reads as a recess down to the workspace surface, matching
+    /// the canvas dot-pattern bg behind the node. Override to
+    /// `Some(c)` if a host wants a custom slot chrome.
+    pub content_slot_fill: Option<Color>,
+    /// Override the 1px outline stroke painted around the content
+    /// slot inset. Defaults to `ColorToken::Border` for a subtle
+    /// border that delineates the slot from the node body on light
+    /// schemes where fill alone may not carry enough contrast.
+    pub content_slot_border: Option<Color>,
     pub node_title_color: Option<Color>,
     pub node_subtitle_color: Option<Color>,
     pub node_selected_outline: Option<Color>,
@@ -167,6 +178,28 @@ impl<'a> ThemeResolver<'a> {
     pub fn node_body_stroke(&self) -> Color {
         self.overrides
             .node_body_stroke
+            .unwrap_or_else(|| Self::theme_color(ColorToken::Border, Color::rgb(0.25, 0.27, 0.32)))
+    }
+
+    /// Fill the content-slot inset uses inside a node body.
+    ///
+    /// Defaults to `ColorToken::Background` so the slot reads as a
+    /// recess sunk down to the workspace surface — exactly the
+    /// canvas dot-pattern bg the node sits on. This keeps the slot
+    /// chrome consistent with the workspace regardless of how the
+    /// host theme colours the node body itself.
+    pub fn content_slot_fill(&self) -> Color {
+        self.overrides.content_slot_fill.unwrap_or_else(|| {
+            Self::theme_color(ColorToken::Background, Color::rgb(0.04, 0.05, 0.07))
+        })
+    }
+
+    /// 1px outline stroke around the content-slot inset. Defaults
+    /// to `ColorToken::Border` — subtle but enough to read on light
+    /// schemes where slot bg and node body sit close in luminance.
+    pub fn content_slot_border(&self) -> Color {
+        self.overrides
+            .content_slot_border
             .unwrap_or_else(|| Self::theme_color(ColorToken::Border, Color::rgb(0.25, 0.27, 0.32)))
     }
 

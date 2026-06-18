@@ -2879,7 +2879,13 @@ where
                 });
                 blinc_layout::request_redraw();
             });
-        outer
+        // Capture KEY_DOWN + TEXT_INPUT events on the outer canvas
+        // wrapper so portal_ui's inline-editable widgets (text_input,
+        // future number input) can drain them per-frame. Idempotent
+        // against the editor's existing canvas-level keyboard
+        // handlers — these are additive Div handlers, not the
+        // single-owner kit-level ones.
+        blinc_portal_ui::ui::install_kbd_hook(outer)
     }
 
     /// Register drag + drag-end handlers on the underlying canvas

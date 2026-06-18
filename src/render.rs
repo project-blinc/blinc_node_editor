@@ -222,18 +222,6 @@ pub fn content_slot_rects(
     Some(ContentSlotRects { inset, portal })
 }
 
-/// Darken `c` toward black by `t` (0..1). Used to derive the
-/// content slot's inset fill from the node body fill so the slot
-/// reads as recessed regardless of theme.
-fn darken(c: Color, t: f32) -> Color {
-    Color::rgba(
-        (c.r * (1.0 - t)).max(0.0),
-        (c.g * (1.0 - t)).max(0.0),
-        (c.b * (1.0 - t)).max(0.0),
-        c.a,
-    )
-}
-
 /// Iterate a node's ports + their resolved centre points, grouped
 /// by [`PortPosition`]. Uses `slots.body` (translated to absolute
 /// coords) for L/R ports so they sit below the header.
@@ -446,13 +434,32 @@ pub fn draw_node_at<K: PortKind, M>(
     // `content_slot_rects` so paint + portal-bounds stay aligned.
     if matches!(shape, NodeShape::Rectangle | NodeShape::Custom) {
         if let Some(slot) = content_slot_rects(bounds, slots) {
-            let inset_fill = darken(theme.node_body_fill(), 0.20);
+            // The content slot now uses the workspace `Background`
+            // token (same as the canvas bg) instead of a darken of
+            // the body fill. Reads as a recess sunk through the
+            // node body down to the canvas surface — cleaner on
+            // light bundles where the previous `darken(body, 0.20)`
+            // produced a muddy grey that didn't relate to either
+            // the node chrome or the workspace tone. A 1px Border
+            // outline on top delineates the slot from the node body
+            // on light schemes where fill alone may not carry
+            // enough contrast.
+            let inset_fill = theme.content_slot_fill();
+            let inset_border = theme.content_slot_border();
             let inset_radius = CornerRadius::uniform(radius * 0.7);
             themed_fill_rect(
                 ctx,
                 slot.inset,
                 inset_radius,
                 Brush::Solid(inset_fill),
+                theme,
+            );
+            themed_stroke_rect(
+                ctx,
+                slot.inset,
+                inset_radius,
+                &Stroke::new(1.0),
+                Brush::Solid(inset_border),
                 theme,
             );
         }

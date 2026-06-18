@@ -54,14 +54,14 @@ blinc_svg    = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5e
 # repo (`github.com/project-blinc/blinc_canvas_kit`); the [patch]
 # block below redirects to the colocated checkout under
 # `../blinc_canvas_kit` for source-local development.
-blinc_canvas_kit = { git = "https://github.com/project-blinc/blinc_canvas_kit.git", rev = "8347d7d97d3932da7bb80b28ca8eec1f9a01679f" }
+blinc_canvas_kit = { git = "https://github.com/project-blinc/blinc_canvas_kit.git", rev = "da0d0540b82a0dc940351abf957a0499f4e9da11" }
 
 # Immediate-mode widget toolkit used to render `NodeTemplate::with_content`
 # closures inside node bodies. Lives in its own repo
 # (`github.com/project-blinc/blinc_portal_ui`); the [patch] block
 # below redirects to the colocated checkout under
 # `../blinc_portal_ui` for source-local development.
-blinc_portal_ui  = { git = "https://github.com/project-blinc/blinc_portal_ui.git", rev = "d8f1f760eb058fdbf822ba16ecee9e23c0c0a066" }
+blinc_portal_ui  = { git = "https://github.com/project-blinc/blinc_portal_ui.git", rev = "3fe946fd1ae42d3755a8caf48493c005b33ce3f9" }
 
 # Cross-target monotonic clock for edge-flow animation timing (same
 # rationale as canvas-kit's sketch layer: std::time::Instant panics on
