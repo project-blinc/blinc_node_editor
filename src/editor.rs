@@ -320,6 +320,15 @@ pub struct NodeEditor<K: PortKind, N, C, G> {
     /// [`blinc_portal_ui::Portal::consumed_height`] reports.
     portal_content_heights: Arc<Mutex<AHashMap<NodeId, f32>>>,
 
+    /// Per-node measured natural width from the last portal frame.
+    /// Mirror of [`Self::portal_content_heights`] on the horizontal
+    /// axis — drives fit-content node width. Value is the quantised
+    /// (4 px grid), padded measurement; `apply_portal_width_override`
+    /// also enforces the template's `content.min_width` floor at
+    /// apply time. Only consulted when `instance.size` is `None` —
+    /// explicit host sizing always wins.
+    portal_content_widths: Arc<Mutex<AHashMap<NodeId, f32>>>,
+
     /// Last render frame's cull stats — visible vs total counts for
     /// nodes + edges. Updated atomically at the end of every
     /// `render_frame`; hosts read via [`Self::last_render_stats`] to
@@ -451,6 +460,7 @@ impl<K: PortKind, N, C, G> Clone for NodeEditor<K, N, C, G> {
             on_context_menu: self.on_context_menu.clone(),
             portals: self.portals.clone(),
             portal_content_heights: self.portal_content_heights.clone(),
+            portal_content_widths: self.portal_content_widths.clone(),
             render_stats: self.render_stats.clone(),
             group_text_rects: self.group_text_rects.clone(),
             badge_rects: self.badge_rects.clone(),
@@ -680,6 +690,7 @@ where
             on_context_menu: Arc::new(RwLock::new(None)),
             portals: Arc::new(Mutex::new(blinc_portal_ui::PortalManager::new())),
             portal_content_heights: Arc::new(Mutex::new(AHashMap::new())),
+            portal_content_widths: Arc::new(Mutex::new(AHashMap::new())),
             render_stats: Arc::new(RenderStatsCell::default()),
             group_text_rects,
             badge_rects,
@@ -729,6 +740,44 @@ where
             let needed = stored + OUTER_AND_INNER_PAD;
             if needed > inputs.content_height {
                 inputs.content_height = needed;
+            }
+        }
+    }
+
+    /// Patch `inputs.width` with the previous frame's portal-consumed
+    /// width when it exceeds the resolved width (theme default raised
+    /// by `template.content.min_width` if any). Caller should gate on
+    /// `instance.size.is_none()` — explicit host sizing must win.
+    ///
+    /// Horizontal counterpart of [`Self::apply_portal_height_override`].
+    /// Same model: closure emits whatever it wants; this method grows
+    /// the slot's overall width on the next frame so wide widgets
+    /// stop clipping. Includes the renderer's per-side body padding
+    /// from `content_slot_rects` (10 px outer pad + 8 px inner pad on
+    /// each side = 36 px total) so the measured cursor extent still
+    /// has the same margin to the chrome.
+    fn apply_portal_width_override(
+        &self,
+        template: &crate::NodeTemplate<K>,
+        node_id: &NodeId,
+        inputs: &mut crate::slot::NodeSlotInputs,
+    ) {
+        if let Some(stored) = self
+            .portal_content_widths
+            .lock()
+            .unwrap()
+            .get(node_id)
+            .copied()
+        {
+            const OUTER_AND_INNER_PAD_X: f32 = 36.0;
+            let content_min_w = template
+                .content
+                .as_ref()
+                .and_then(|c| c.min_width)
+                .unwrap_or(0.0);
+            let needed = (stored + OUTER_AND_INNER_PAD_X).max(content_min_w);
+            if needed > inputs.width {
+                inputs.width = needed;
             }
         }
     }
@@ -2575,6 +2624,9 @@ where
                 continue;
             };
             let mut inputs = node_inputs_from::<K, N>(template, node, &theme);
+            if node.size.is_none() {
+                self.apply_portal_width_override(template, &node.id, &mut inputs);
+            }
             self.apply_portal_height_override(&node.id, &mut inputs);
             let fp = fingerprint_node(template, node, &inputs, theme_rev);
             node_wanted.insert(fp);
@@ -2657,6 +2709,9 @@ where
         theme: &ThemeResolver<'_>,
     ) -> NodeSlots {
         let mut inputs = node_inputs_from::<K, N>(template, instance, theme);
+        if instance.size.is_none() {
+            self.apply_portal_width_override(template, &instance.id, &mut inputs);
+        }
         self.apply_portal_height_override(&instance.id, &mut inputs);
         let fp = fingerprint_node(
             template,
@@ -4282,6 +4337,22 @@ where
                     blinc_layout::request_redraw();
                 }
                 drop(heights);
+
+                // Same shape on the horizontal axis — drives fit-
+                // content node width. Quantise to a 4 px grid so the
+                // `NodeSlotCache` fingerprint (keyed on width.to_bits)
+                // doesn't bloat with sub-pixel drift, and only write
+                // when meaningfully changed.
+                let consumed_w_raw = portal.consumed_width();
+                let consumed_w = (consumed_w_raw / 4.0).round() * 4.0;
+                let mut widths = self.portal_content_widths.lock().unwrap();
+                let prev_w = widths.get(&node.id).copied().unwrap_or(0.0);
+                if (consumed_w - prev_w).abs() > 0.5 {
+                    widths.insert(node.id.clone(), consumed_w);
+                    blinc_layout::request_redraw();
+                }
+                drop(widths);
+
                 if portal_animating {
                     any_animated_edge = true;
                 }
@@ -4493,6 +4564,10 @@ where
             let live: HashSet<NodeId> = frame.graph.nodes.iter().map(|n| n.id.clone()).collect();
             self.portals.lock().unwrap().retain(|id| live.contains(id));
             self.portal_content_heights
+                .lock()
+                .unwrap()
+                .retain(|id, _| live.contains(id));
+            self.portal_content_widths
                 .lock()
                 .unwrap()
                 .retain(|id, _| live.contains(id));
