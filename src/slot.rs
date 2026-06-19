@@ -78,6 +78,13 @@ pub struct NodeSlots {
     /// truth for node height — `render::node_bounds` reads it
     /// rather than re-deriving with hand-math.
     pub total_height: f32,
+    /// Total node width — equal to `NodeSlotInputs.width` resolved
+    /// from `instance.size`, theme default, and any
+    /// `template.content.min_width` floor. Renderer reads this
+    /// instead of recomputing from `instance.size` so the
+    /// `content.min_width` widening (port placement, body width,
+    /// outer rect) is consistent everywhere.
+    pub total_width: f32,
 }
 
 /// Per-group chrome layout. Same node-local convention.
@@ -208,7 +215,20 @@ pub fn node_inputs_from<K: PortKind, M>(
     theme: &ThemeResolver<'_>,
 ) -> NodeSlotInputs {
     let (def_w, _) = theme.default_node_size();
-    let w = instance.size.map(|(w, _)| w).unwrap_or(def_w);
+    // Width resolution: explicit `NodeInstance.size.0` wins; else
+    // theme default, but raised to the template's declared
+    // `content.min_width` floor if present so portal-ui content
+    // (immediate-mode, opaque to taffy) doesn't clip when the
+    // template knows it needs more room.
+    let content_min_w = template
+        .content
+        .as_ref()
+        .and_then(|c| c.min_width)
+        .unwrap_or(0.0);
+    let w = instance
+        .size
+        .map(|(w, _)| w)
+        .unwrap_or_else(|| def_w.max(content_min_w));
     NodeSlotInputs {
         width: w,
         has_subtitle: instance.subtitle.is_some(),
@@ -486,6 +506,7 @@ pub fn compute_node_slots(inputs: &NodeSlotInputs) -> NodeSlots {
         badge: badge_node.map(|n| read_rect_within(&tree, n, &[root, header])),
         body: read_rect(&tree, body, Point::new(0.0, 0.0)),
         total_height: root_layout.height(),
+        total_width: inputs.width,
     }
 }
 

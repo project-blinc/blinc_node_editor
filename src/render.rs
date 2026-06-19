@@ -94,28 +94,24 @@ fn draw_shadow_stack(
 
 /// Resolve a node's bounding rect: `position` is the top-left.
 ///
-/// Width: `instance.size.0` if explicitly set, otherwise the theme
-/// default.
-///
-/// Height: comes straight from the slot table's
-/// [`slot::NodeSlots::total_height`] — i.e. whatever taffy computed
-/// for the slot tree (`fit-content` over icon + title + subtitle +
-/// padding, plus the body region when the template carries a
-/// content slot). There is
-/// no hand-math here on purpose: this is the SOLE source of truth
-/// for node height, shared with `iter_port_positions` /
-/// `draw_node_at` so the body and the ports never disagree.
+/// Width and height both come from the slot table — taffy resolves
+/// the slot tree's `fit-content` over icon + title + subtitle +
+/// padding (and the body region when the template carries a
+/// content slot), and the width includes any
+/// `template.content.min_width` floor declared at the template
+/// level. There is no hand-math here on purpose: this is the SOLE
+/// source of truth for the node rect, shared with
+/// `iter_port_positions` / `draw_node_at` so the body and the
+/// ports never disagree.
 pub fn node_bounds<M>(
-    instance: &NodeInstance<M>,
+    _instance: &NodeInstance<M>,
     slots: &crate::slot::NodeSlots,
-    theme: &ThemeResolver<'_>,
+    _theme: &ThemeResolver<'_>,
 ) -> Rect {
-    let (default_w, _) = theme.default_node_size();
-    let w = instance.size.map(|(w, _)| w).unwrap_or(default_w);
     Rect::new(
-        instance.position.x,
-        instance.position.y,
-        w,
+        _instance.position.x,
+        _instance.position.y,
+        slots.total_width,
         slots.total_height,
     )
 }

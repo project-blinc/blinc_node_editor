@@ -132,6 +132,14 @@ pub struct NodeContent {
     /// Body region height in pixels — added to the node's overall
     /// height. The portal paints inside a body rect of this height.
     pub height: f32,
+    /// Optional minimum body width in pixels. Used by the slot
+    /// taffy pass as a floor on the node's overall width: the
+    /// renderer takes `max(instance.size_or_default_w, min_width)`
+    /// so a template can declare "my content needs at least N
+    /// pixels of horizontal room" without every caller hand-tuning
+    /// `NodeInstance::with_size`. `None` falls through to the
+    /// existing instance / theme-default behaviour.
+    pub min_width: Option<f32>,
     /// Per-frame UI closure. Receives the node id (for per-instance
     /// signal / state lookup) and a portal-ui builder; emit widgets
     /// or call `ui.allocate_painter(...)` for free-form painting.
@@ -143,6 +151,7 @@ impl std::fmt::Debug for NodeContent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NodeContent")
             .field("height", &self.height)
+            .field("min_width", &self.min_width)
             .field("render", &"<closure>")
             .finish()
     }
@@ -205,6 +214,27 @@ impl<K: PortKind> NodeTemplate<K> {
     {
         self.content = Some(NodeContent {
             height,
+            min_width: None,
+            render: Arc::new(render),
+        });
+        self
+    }
+
+    /// Same as [`Self::with_content`] but declares a minimum width
+    /// the body needs to render without clipping. The slot taffy
+    /// pass treats this as a floor on the node's overall width, so
+    /// hosts don't have to hand-tune `NodeInstance::with_size` for
+    /// every instance — the template states "my body needs N px"
+    /// once. Portal-UI is immediate-mode and can't be measured by
+    /// taffy directly; declaring the natural width on the template
+    /// is the cheapest equivalent.
+    pub fn with_content_size<F>(mut self, width: f32, height: f32, render: F) -> Self
+    where
+        F: Fn(&NodeId, &mut blinc_portal_ui::PortalUi) + Send + Sync + 'static,
+    {
+        self.content = Some(NodeContent {
+            height,
+            min_width: Some(width),
             render: Arc::new(render),
         });
         self
