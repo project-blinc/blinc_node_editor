@@ -529,37 +529,41 @@ fn resolve_positions_core(
 ) -> bool {
     let n = positions.len();
     let half_pad = padding * 0.5;
-    const MAX_ITERS: u32 = 24;
+    // Jacobi-style symmetric relaxation: each pass computes ALL
+    // displacements against the pass's STARTING positions, sums
+    // them per node, and applies once at the end. This avoids the
+    // within-pass undo of in-place (Gauss-Seidel) relaxation —
+    // where pushing pair (i,j) then (i,k) moves i twice and can
+    // leave sub-pixel residuals that never clear — so it converges
+    // cleanly on dense piles. `EPS` over-pushes a hair past contact
+    // so floating-point round-off can't leave a touching pair
+    // flagged as overlapping next pass.
+    //
+    // ALL node-node pairs relax, including member ↔ outsider: a
+    // static group rect can't separate them (members drift during
+    // relaxation), so direct node-node separation is the robust
+    // path. Auto-fit groups mean a nudged member doesn't "escape" —
+    // its bbox follows it on the next recompute. (`group_of`
+    // retained for future pinned-group handling.)
+    let _ = group_of;
+    const MAX_ITERS: u32 = 64;
+    const EPS: f32 = 0.01;
     let mut any_moved = false;
 
     for _iter in 0..MAX_ITERS {
-        let mut moved_this_pass = false;
+        let mut disp = vec![(0.0_f32, 0.0_f32); n];
+        let mut touched = false;
 
-        // ── node ↔ node cascade ──────────────────────────────
-        for anchor in 0..n {
-            let (aw, ah) = sizes[anchor];
-            let ax = positions[anchor].x;
-            let ay = positions[anchor].y;
-            for j in (anchor + 1)..n {
-                // Membership guard: if j is grouped and the anchor is
-                // not in j's group, skip the node-node shove — moving
-                // j here could eject it from its group. The group
-                // keep-out pass ejects the outsider (the anchor)
-                // instead. Same-group pairs + ungrouped j fall
-                // through and resolve normally (a group auto-fits
-                // around its members, so separating two members just
-                // grows the group).
-                if let Some(gj) = group_of[j] {
-                    if group_of[anchor] != Some(gj) {
-                        continue;
-                    }
-                }
+        // ── node ↔ node ──────────────────────────────────────
+        for i in 0..n {
+            let (iw, ih) = sizes[i];
+            for j in (i + 1)..n {
                 let (jw, jh) = sizes[j];
                 let (px, py) = aabb_penetration(
-                    ax,
-                    ay,
-                    aw,
-                    ah,
+                    positions[i].x,
+                    positions[i].y,
+                    iw,
+                    ih,
                     positions[j].x,
                     positions[j].y,
                     jw,
@@ -569,22 +573,34 @@ fn resolve_positions_core(
                 if px <= 0.0 || py <= 0.0 {
                     continue;
                 }
-                let a_cx = ax + aw * 0.5;
-                let a_cy = ay + ah * 0.5;
+                let i_cx = positions[i].x + iw * 0.5;
+                let i_cy = positions[i].y + ih * 0.5;
                 let j_cx = positions[j].x + jw * 0.5;
                 let j_cy = positions[j].y + jh * 0.5;
+                // Split along the shortest axis; each node takes
+                // half the penetration in opposite directions.
+                // Co-located centres get a deterministic index bias.
                 if px < py {
-                    let sign = if j_cx >= a_cx { 1.0 } else { -1.0 };
-                    positions[j].x += px * sign;
+                    let j_right = if j_cx != i_cx { j_cx >= i_cx } else { j > i };
+                    let half = (px + EPS) * 0.5;
+                    let s = if j_right { 1.0 } else { -1.0 };
+                    disp[j].0 += half * s;
+                    disp[i].0 -= half * s;
                 } else {
-                    let sign = if j_cy >= a_cy { 1.0 } else { -1.0 };
-                    positions[j].y += py * sign;
+                    let j_below = if j_cy != i_cy { j_cy >= i_cy } else { j > i };
+                    let half = (py + EPS) * 0.5;
+                    let s = if j_below { 1.0 } else { -1.0 };
+                    disp[j].1 += half * s;
+                    disp[i].1 -= half * s;
                 }
-                moved_this_pass = true;
+                touched = true;
             }
         }
 
         // ── node ↔ group keep-out ────────────────────────────
+        // Non-member nodes are ejected fully out of each group's
+        // painted chrome rect (covers the header band + padding
+        // that node-node separation alone wouldn't clear).
         for (oi, rect) in group_rects.iter().enumerate() {
             let gl = rect.x();
             let gt = rect.y();
@@ -592,7 +608,7 @@ fn resolve_positions_core(
             let gb = rect.y() + rect.height();
             for i in 0..n {
                 if exempt[oi][i] {
-                    continue; // members live inside their group
+                    continue;
                 }
                 let (w, h) = sizes[i];
                 let nl = positions[i].x - half_pad;
@@ -602,7 +618,7 @@ fn resolve_positions_core(
                 let px = gr.min(nr) - gl.max(nl);
                 let py = gb.min(nb) - gt.max(nt);
                 if px <= 0.0 || py <= 0.0 {
-                    continue; // clear of this group
+                    continue;
                 }
                 let push_left = nr - gl;
                 let push_right = gr - nl;
@@ -612,21 +628,31 @@ fn resolve_positions_core(
                 let min_v = push_up.min(push_down);
                 if min_h <= min_v {
                     if push_left <= push_right {
-                        positions[i].x -= push_left;
+                        disp[i].0 -= push_left + EPS;
                     } else {
-                        positions[i].x += push_right;
+                        disp[i].0 += push_right + EPS;
                     }
                 } else if push_up <= push_down {
-                    positions[i].y -= push_up;
+                    disp[i].1 -= push_up + EPS;
                 } else {
-                    positions[i].y += push_down;
+                    disp[i].1 += push_down + EPS;
                 }
-                moved_this_pass = true;
+                touched = true;
             }
         }
 
-        any_moved |= moved_this_pass;
-        if !moved_this_pass {
+        if !touched {
+            break;
+        }
+        // Apply the accumulated displacement for this pass.
+        let mut max_disp = 0.0_f32;
+        for (p, (dx, dy)) in positions.iter_mut().zip(disp.iter()) {
+            p.x += *dx;
+            p.y += *dy;
+            max_disp = max_disp.max(dx.abs()).max(dy.abs());
+        }
+        any_moved = true;
+        if max_disp < EPS {
             break;
         }
     }
@@ -634,68 +660,19 @@ fn resolve_positions_core(
     any_moved
 }
 
-/// Position-only variant — same edge-based cascade with the same
-/// convergence guarantees, on parallel `positions` + `sizes`
-/// slices so callers without an `N: Clone` bound (auto-layout's
-/// force-kernel output) can run it against scratch buffers.
-/// Returns `true` if any position changed.
+/// Position-only resolve with no group obstacles — symmetric
+/// relaxation on parallel `positions` + `sizes` slices, for callers
+/// without an `N: Clone` bound (auto-layout's force-kernel output)
+/// that have no groups to honour. Delegates to the shared core with
+/// empty group inputs. Returns `true` if any position changed.
 pub fn resolve_overlaps_positions(
     positions: &mut [Point],
     sizes: &[(f32, f32)],
     padding: f32,
 ) -> bool {
-    let n = positions.len();
     debug_assert_eq!(positions.len(), sizes.len());
-    if n < 2 {
-        return false;
-    }
-    let half_pad = padding * 0.5;
-
-    const MAX_ITERS: u32 = 16;
-    let mut any_moved = false;
-
-    for _iter in 0..MAX_ITERS {
-        let mut moved_this_pass = false;
-        for anchor in 0..n {
-            let (aw, ah) = sizes[anchor];
-            let ax = positions[anchor].x;
-            let ay = positions[anchor].y;
-            for j in (anchor + 1)..n {
-                let (jw, jh) = sizes[j];
-                let (px, py) = aabb_penetration(
-                    ax,
-                    ay,
-                    aw,
-                    ah,
-                    positions[j].x,
-                    positions[j].y,
-                    jw,
-                    jh,
-                    half_pad,
-                );
-                if px <= 0.0 || py <= 0.0 {
-                    continue;
-                }
-                let a_cx = ax + aw * 0.5;
-                let a_cy = ay + ah * 0.5;
-                let j_cx = positions[j].x + jw * 0.5;
-                let j_cy = positions[j].y + jh * 0.5;
-                if px < py {
-                    let sign = if j_cx >= a_cx { 1.0 } else { -1.0 };
-                    positions[j].x += px * sign;
-                } else {
-                    let sign = if j_cy >= a_cy { 1.0 } else { -1.0 };
-                    positions[j].y += py * sign;
-                }
-                moved_this_pass = true;
-                any_moved = true;
-            }
-        }
-        if !moved_this_pass {
-            break;
-        }
-    }
-    any_moved
+    let group_of: Vec<Option<usize>> = vec![None; positions.len()];
+    resolve_positions_core(positions, sizes, &[], &[], &group_of, padding)
 }
 
 /// Cheap predicate — true if any pair of nodes' bounding boxes
@@ -1799,6 +1776,119 @@ mod tests {
         let size_of = |_: &NodeId| (180.0, 72.0);
         let moved = resolve_overlaps_in_place(&mut nodes, size_of, 12.0);
         assert!(!moved, "non-overlapping layout must be left untouched");
+    }
+
+    #[test]
+    fn layered_then_resolve_separates_tall_nodes() {
+        // Replicates the demo's left-to-right failure: two
+        // disconnected tall nodes. The layered kernel stacks them
+        // using the placeholder instance.size (180×72 — these have
+        // size=None), far closer than their real ~220px height.
+        // The post-resolve apply_layout runs must spread them with
+        // the REAL sizes.
+        let nodes = vec![node("wave", 0.0, 0.0), node("perlin", 0.0, 0.0)];
+        let positions = apply_layout::<(), (), ()>(
+            &LayoutStrategy::Layered(LayeredConfig {
+                orientation: LayoutOrientation::LeftToRight,
+                ..LayeredConfig::default()
+            }),
+            &nodes,
+            &[],
+            &[],
+        );
+        let sizes = vec![(180.0, 220.0), (160.0, 224.0)];
+        let mut positions = positions;
+        let group_of = vec![None, None];
+        resolve_overlaps_positions_with_groups(&mut positions, &sizes, &[], &[], &group_of, 12.0);
+        let (px, py) = aabb_penetration(
+            positions[0].x,
+            positions[0].y,
+            sizes[0].0,
+            sizes[0].1,
+            positions[1].x,
+            positions[1].y,
+            sizes[1].0,
+            sizes[1].1,
+            0.0,
+        );
+        assert!(
+            !(px > 0.0 && py > 0.0),
+            "tall nodes still overlap after layered + post-resolve: pen=({px},{py}) pos={positions:?}"
+        );
+    }
+
+    #[test]
+    fn dense_cluster_with_group_fully_separates() {
+        // Stress: 17 heterogeneous-size nodes piled near origin
+        // (like force-kernel output before spacing) plus one group
+        // of 2 members. After the group-aware resolve NOTHING may
+        // overlap node-node, and no non-member may sit in the group
+        // rect. Exercises fixed-point convergence at the demo's
+        // scale.
+        let mut nodes: Vec<NodeInstance<()>> = (0..17)
+            .map(|i| {
+                node(
+                    &format!("n{i}"),
+                    (i % 4) as f32 * 30.0,
+                    (i / 4) as f32 * 25.0,
+                )
+            })
+            .collect();
+        // Heterogeneous sizes: some tall content nodes, some small.
+        let size_for = |id: &NodeId| -> (f32, f32) {
+            let n: usize = id.as_str().trim_start_matches('n').parse().unwrap_or(0);
+            match n % 3 {
+                0 => (200.0, 220.0),
+                1 => (160.0, 90.0),
+                _ => (180.0, 72.0),
+            }
+        };
+        // Group of n1 + n2 (members). Rect roughly around their
+        // start cluster, sized to actually contain them.
+        let obstacles = vec![GroupObstacle {
+            rect: Rect::new(-20.0, -20.0, 260.0, 200.0),
+            members: vec![NodeId::from("n1"), NodeId::from("n2")],
+        }];
+
+        resolve_overlaps_in_place_with_groups(&mut nodes, size_for, &obstacles, 12.0);
+
+        // No node-node overlap.
+        for i in 0..nodes.len() {
+            for j in (i + 1)..nodes.len() {
+                let (px, py) = aabb_penetration(
+                    nodes[i].position.x,
+                    nodes[i].position.y,
+                    size_for(&nodes[i].id).0,
+                    size_for(&nodes[i].id).1,
+                    nodes[j].position.x,
+                    nodes[j].position.y,
+                    size_for(&nodes[j].id).0,
+                    size_for(&nodes[j].id).1,
+                    0.0,
+                );
+                assert!(
+                    !(px > 0.0 && py > 0.0),
+                    "n{i} overlaps n{j} after resolve: pen=({px},{py})"
+                );
+            }
+        }
+        // No non-member sits inside the group rect.
+        let gr = &obstacles[0].rect;
+        for nd in &nodes {
+            if obstacles[0].members.contains(&nd.id) {
+                continue;
+            }
+            let (w, h) = size_for(&nd.id);
+            let clear = nd.position.x + w <= gr.x()
+                || nd.position.x >= gr.x() + gr.width()
+                || nd.position.y + h <= gr.y()
+                || nd.position.y >= gr.y() + gr.height();
+            assert!(
+                clear,
+                "{} sits inside the group rect after resolve",
+                nd.id.as_str()
+            );
+        }
     }
 
     #[test]
