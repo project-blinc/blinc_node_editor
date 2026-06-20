@@ -352,6 +352,84 @@ fn apply_force_layout<N, M, G>(
 /// that `f32` doesn't round to zero.
 const KERNEL_EPSILON: f32 = 1e-3;
 
+// ─────────────────────────────────────────────────────────────────────
+// AABB overlap resolve (one-pass, deterministic)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Push apart any pair of nodes whose bounding boxes overlap.
+/// Single-pass cascade: walk every node in input order, treat it
+/// as an immovable anchor, and shove any later neighbour that
+/// overlaps it along the shortest separation axis. Each node has
+/// already been "settled" relative to all earlier nodes by the
+/// time we process it as an anchor, so the cascade resolves the
+/// graph in one linear sweep.
+///
+/// Sketch:
+///   for anchor in 0..N:
+///       for j in anchor+1..N:
+///           if anchor and j overlap:
+///               translate j by the MTV (anchor stays put)
+///
+/// Asymmetric on purpose — moving both nodes when only one is
+/// the "anchor" undoes prior cascades; this way the first node
+/// in the input is the global reference frame and downstream
+/// pushes propagate one step at a time. Used after content-
+/// driven size changes (fit-content width / height shifted)
+/// where a full force-directed layout would be both overkill
+/// and visually disruptive.
+///
+/// `padding` is added to each node's half-extent so the final
+/// layout leaves a visible gap rather than touching edge-to-edge.
+/// Deterministic + idempotent: a non-overlapping input is
+/// unchanged on output. The auto-trigger in the editor re-fires
+/// every frame size changes are detected, so any residual cascade
+/// (j pushed into a not-yet-anchored k) converges across frames.
+pub fn resolve_overlaps_in_place<N, F>(
+    nodes: &mut [NodeInstance<N>],
+    mut size_of: F,
+    padding: f32,
+) where
+    F: FnMut(&crate::node::NodeId) -> (f32, f32),
+{
+    let n = nodes.len();
+    if n < 2 {
+        return;
+    }
+    let sizes: Vec<(f32, f32)> = nodes.iter().map(|n| size_of(&n.id)).collect();
+
+    for anchor in 0..n {
+        let (aw, ah) = sizes[anchor];
+        let ahw = aw * 0.5 + padding;
+        let ahh = ah * 0.5 + padding;
+        let ax = nodes[anchor].position.x;
+        let ay = nodes[anchor].position.y;
+
+        for j in (anchor + 1)..n {
+            let (jw, jh) = sizes[j];
+            let jhw = jw * 0.5 + padding;
+            let jhh = jh * 0.5 + padding;
+            let dx = nodes[j].position.x - ax;
+            let dy = nodes[j].position.y - ay;
+            let overlap_x = (ahw + jhw) - dx.abs();
+            let overlap_y = (ahh + jhh) - dy.abs();
+            if overlap_x <= 0.0 || overlap_y <= 0.0 {
+                continue;
+            }
+
+            // Shortest axis = minimum-translation-vector. Sign
+            // preserves whichever side j is already on (don't
+            // teleport it across the anchor).
+            if overlap_x < overlap_y {
+                let sign = if dx >= 0.0 { 1.0 } else { -1.0 };
+                nodes[j].position.x += overlap_x * sign;
+            } else {
+                let sign = if dy >= 0.0 { 1.0 } else { -1.0 };
+                nodes[j].position.y += overlap_y * sign;
+            }
+        }
+    }
+}
+
 /// Spiral-out nudge for any pair of nodes landing on the same
 /// coordinate. Deterministic by index so a repeat layout call
 /// produces the same nudges. Idempotent — once nodes are 1 px

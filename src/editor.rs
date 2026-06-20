@@ -31,7 +31,7 @@ use blinc_core::reactive::{SignalId, State};
 use blinc_core::DrawContext;
 use blinc_layout::Div;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -329,6 +329,16 @@ pub struct NodeEditor<K: PortKind, N, C, G> {
     /// explicit host sizing always wins.
     portal_content_widths: Arc<Mutex<AHashMap<NodeId, f32>>>,
 
+    /// Set when any node's measured content width or height changed
+    /// this frame; consumed at the end of the same frame's render
+    /// pass to run [`layout::resolve_overlaps_in_place`] on the
+    /// graph. The auto-resolve is silent (no event, no animation)
+    /// because the host didn't ask for it — it's a corrective
+    /// nudge that runs every time fit-content sizing shifts a
+    /// node's footprint. Atomic so the render closure can flip it
+    /// from inside the per-node loop without grabbing a lock.
+    pending_overlap_resolve: Arc<AtomicBool>,
+
     /// Last render frame's cull stats — visible vs total counts for
     /// nodes + edges. Updated atomically at the end of every
     /// `render_frame`; hosts read via [`Self::last_render_stats`] to
@@ -461,6 +471,7 @@ impl<K: PortKind, N, C, G> Clone for NodeEditor<K, N, C, G> {
             portals: self.portals.clone(),
             portal_content_heights: self.portal_content_heights.clone(),
             portal_content_widths: self.portal_content_widths.clone(),
+            pending_overlap_resolve: self.pending_overlap_resolve.clone(),
             render_stats: self.render_stats.clone(),
             group_text_rects: self.group_text_rects.clone(),
             badge_rects: self.badge_rects.clone(),
@@ -691,6 +702,7 @@ where
             portals: Arc::new(Mutex::new(blinc_portal_ui::PortalManager::new())),
             portal_content_heights: Arc::new(Mutex::new(AHashMap::new())),
             portal_content_widths: Arc::new(Mutex::new(AHashMap::new())),
+            pending_overlap_resolve: Arc::new(AtomicBool::new(false)),
             render_stats: Arc::new(RenderStatsCell::default()),
             group_text_rects,
             badge_rects,
@@ -2786,6 +2798,45 @@ where
         self.push_event(EditorEvent::LayoutApplied(updates));
     }
 
+    /// Resolve any AABB overlaps in the current node positions using
+    /// the cascade pass in [`crate::layout::resolve_overlaps_in_place`].
+    /// Host-callable entry point — the editor auto-fires this every
+    /// frame a node's fit-content width or height changes, but a host
+    /// can invoke it directly (e.g. after programmatically inserting
+    /// a node, on a "tidy" menu item) without going through the full
+    /// force-directed layout. Uses the slot tree's `total_width` /
+    /// `total_height` as each node's footprint so fit-content nodes
+    /// contribute their real rendered extent, not the placeholder
+    /// `instance.size` hint.
+    pub fn resolve_overlaps_now(&self) {
+        let templates = self.templates.read().unwrap();
+        let theme_overrides = self.theme.read().unwrap();
+        let theme = ThemeResolver::new(&theme_overrides);
+
+        let sizes: ahash::AHashMap<NodeId, (f32, f32)> = {
+            let graph = self.graph.read().unwrap();
+            graph
+                .nodes
+                .iter()
+                .filter_map(|inst| {
+                    let tpl = templates.get(&inst.component)?;
+                    let slots = self.node_slots_for(tpl, inst, &theme);
+                    Some((inst.id.clone(), (slots.total_width, slots.total_height)))
+                })
+                .collect()
+        };
+        drop(theme);
+        drop(theme_overrides);
+        drop(templates);
+
+        let mut g = self.graph.write().unwrap();
+        crate::layout::resolve_overlaps_in_place(
+            &mut g.nodes,
+            |id| sizes.get(id).copied().unwrap_or((180.0, 72.0)),
+            12.0,
+        );
+    }
+
     // ─── Callback registration (validators only) ─────────────────────
 
     /// Host-supplied connection validator. Called as the user drags
@@ -4335,6 +4386,11 @@ where
                 if (consumed - prev).abs() > 0.5 {
                     heights.insert(node.id.clone(), consumed);
                     blinc_layout::request_redraw();
+                    // Fit-content height changed → node footprint
+                    // shifted → request a collision-resolve pass at
+                    // end-of-frame so neighbours get pushed apart
+                    // along the shortest axis before the next paint.
+                    self.pending_overlap_resolve.store(true, Ordering::Relaxed);
                 }
                 drop(heights);
 
@@ -4350,6 +4406,7 @@ where
                 if (consumed_w - prev_w).abs() > 0.5 {
                     widths.insert(node.id.clone(), consumed_w);
                     blinc_layout::request_redraw();
+                    self.pending_overlap_resolve.store(true, Ordering::Relaxed);
                 }
                 drop(widths);
 
@@ -4581,6 +4638,46 @@ where
             total_edges,
             visible_edges,
         });
+
+        // Drain the per-frame collision-resolve request. Any node's
+        // fit-content width or height changed → capture per-node
+        // real footprint (slot tree → total_width × total_height)
+        // while we still hold the frame's read locks, then drop
+        // the read locks and run the resolve under a write lock.
+        // Idempotent + deterministic; once positions converge the
+        // flag stays off until the next size change.
+        let resolve_overlaps = self
+            .pending_overlap_resolve
+            .swap(false, Ordering::Relaxed);
+        let sizes: ahash::AHashMap<NodeId, (f32, f32)> = if resolve_overlaps {
+            frame
+                .graph
+                .nodes
+                .iter()
+                .filter_map(|inst| {
+                    let tpl = frame.templates.get(&inst.component)?;
+                    let slots = self.node_slots_for(tpl, inst, &theme);
+                    Some((inst.id.clone(), (slots.total_width, slots.total_height)))
+                })
+                .collect()
+        } else {
+            ahash::AHashMap::new()
+        };
+
+        // Release the frame's read locks so the write lock below
+        // doesn't deadlock. `theme` borrows from `frame` so it has
+        // to go first.
+        drop(theme);
+        drop(frame);
+
+        if resolve_overlaps {
+            let mut g = self.graph.write().unwrap();
+            crate::layout::resolve_overlaps_in_place(
+                &mut g.nodes,
+                |id| sizes.get(id).copied().unwrap_or((180.0, 72.0)),
+                12.0,
+            );
+        }
     }
 }
 
