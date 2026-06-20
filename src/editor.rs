@@ -2788,40 +2788,107 @@ where
         drop(strategy);
 
         // Resolve any residual AABB overlaps from the kernel's
-        // output — the force-directed kernel uses centre-distance
+        // output. The force-directed kernel uses centre-distance
         // repulsion + Coulomb falloff, which can leave nodes
-        // touching corners or marginally overlapping when the
-        // iteration cap is hit. The cascade pass is deterministic
-        // + idempotent, so layered / manual strategies (which
-        // also flow through this path) get the same guarantee.
+        // touching or marginally overlapping at the iteration cap.
+        // The resolve is group-aware so it never ejects a member
+        // from its group (the hierarchical kernel already nests
+        // members inside group bboxes — a group-blind cascade would
+        // undo that). Group keep-out rects are built from the
+        // KERNEL's positions, not the stale graph positions, since
+        // members just moved. Parallel arrays sidestep cloning
+        // NodeInstance<N> (this impl omits an `N: Clone` bound).
         let templates = self.templates.read().unwrap();
         let theme_overrides = self.theme.read().unwrap();
         let theme = ThemeResolver::new(&theme_overrides);
-        let sizes: ahash::AHashMap<NodeId, (f32, f32)> = graph
+
+        let size_pairs: Vec<(f32, f32)> = graph
             .nodes
             .iter()
-            .filter_map(|inst| {
-                let tpl = templates.get(&inst.component)?;
-                let slots = self.node_slots_for(tpl, inst, &theme);
-                Some((inst.id.clone(), (slots.total_width, slots.total_height)))
+            .map(|inst| {
+                templates
+                    .get(&inst.component)
+                    .map(|tpl| {
+                        let slots = self.node_slots_for(tpl, inst, &theme);
+                        (slots.total_width, slots.total_height)
+                    })
+                    .unwrap_or((180.0, 72.0))
             })
             .collect();
+
+        // Membership (position-independent) by node index.
+        let exempt: Vec<Vec<bool>> = graph
+            .groups
+            .iter()
+            .map(|g| {
+                graph
+                    .nodes
+                    .iter()
+                    .map(|n| g.members.contains(&n.id))
+                    .collect()
+            })
+            .collect();
+        let group_of: Vec<Option<usize>> = graph
+            .nodes
+            .iter()
+            .map(|n| graph.groups.iter().position(|g| g.members.contains(&n.id)))
+            .collect();
+
+        // Group keep-out rects from the kernel's member positions.
+        let pad = theme.group_padding();
+        let group_rects: Vec<Rect> = graph
+            .groups
+            .iter()
+            .enumerate()
+            .map(|(gi, g)| {
+                if let Some(b) = g.bounds {
+                    return b;
+                }
+                let mut min_x = f32::INFINITY;
+                let mut min_y = f32::INFINITY;
+                let mut max_x = f32::NEG_INFINITY;
+                let mut max_y = f32::NEG_INFINITY;
+                let mut any = false;
+                for (i, _n) in graph.nodes.iter().enumerate() {
+                    if !exempt[gi][i] {
+                        continue;
+                    }
+                    let (w, h) = size_pairs[i];
+                    let p = positions[i];
+                    min_x = min_x.min(p.x);
+                    min_y = min_y.min(p.y);
+                    max_x = max_x.max(p.x + w);
+                    max_y = max_y.max(p.y + h);
+                    any = true;
+                }
+                if !any {
+                    // Empty group → zero-area rect, never matches.
+                    return Rect::new(0.0, 0.0, 0.0, 0.0);
+                }
+                let width = (max_x - min_x) + pad * 2.0;
+                let hh = self.group_slots_for(g, width, &theme).header.height();
+                Rect::new(
+                    min_x - pad,
+                    min_y - pad - hh,
+                    width,
+                    (max_y - min_y) + pad * 2.0 + hh,
+                )
+            })
+            .collect();
+
         drop(theme);
         drop(theme_overrides);
         drop(templates);
 
-        // Apply the kernel's positions to scratch buffers and run
-        // the cascade resolver so the emitted LayoutApplied event
-        // is guaranteed overlap-free. Parallel arrays sidestep
-        // having to clone NodeInstance<N> (which would require an
-        // `N: Clone` bound this impl block deliberately omits).
-        let size_pairs: Vec<(f32, f32)> = graph
-            .nodes
-            .iter()
-            .map(|inst| sizes.get(&inst.id).copied().unwrap_or((180.0, 72.0)))
-            .collect();
         let mut positions = positions;
-        crate::layout::resolve_overlaps_positions(&mut positions, &size_pairs, 12.0);
+        crate::layout::resolve_overlaps_positions_with_groups(
+            &mut positions,
+            &size_pairs,
+            &group_rects,
+            &exempt,
+            &group_of,
+            12.0,
+        );
 
         let updates: Vec<(NodeId, Point)> = graph
             .nodes
@@ -2849,9 +2916,9 @@ where
         let theme_overrides = self.theme.read().unwrap();
         let theme = ThemeResolver::new(&theme_overrides);
 
-        let sizes: ahash::AHashMap<NodeId, (f32, f32)> = {
+        let (sizes, obstacles) = {
             let graph = self.graph.read().unwrap();
-            graph
+            let sizes: ahash::AHashMap<NodeId, (f32, f32)> = graph
                 .nodes
                 .iter()
                 .filter_map(|inst| {
@@ -2859,18 +2926,70 @@ where
                     let slots = self.node_slots_for(tpl, inst, &theme);
                     Some((inst.id.clone(), (slots.total_width, slots.total_height)))
                 })
-                .collect()
+                .collect();
+            let obstacles = self.group_obstacles(&graph, &theme);
+            (sizes, obstacles)
         };
         drop(theme);
         drop(theme_overrides);
         drop(templates);
 
         let mut g = self.graph.write().unwrap();
-        crate::layout::resolve_overlaps_in_place(
+        crate::layout::resolve_overlaps_in_place_with_groups(
             &mut g.nodes,
             |id| sizes.get(id).copied().unwrap_or((180.0, 72.0)),
+            &obstacles,
             12.0,
         );
+    }
+
+    /// Build the keep-out obstacle rect for each group — the painted
+    /// chrome rect (members-union ± padding + header band, or the
+    /// explicit `group.bounds` when the host pinned it). Matches the
+    /// geometry in `render::draw_group` so the resolver pushes nodes
+    /// clear of exactly what the user sees. Member ids ride along so
+    /// the resolver exempts a group's own members from its keep-out.
+    fn group_obstacles(
+        &self,
+        graph: &GraphState<K, N, C, G>,
+        theme: &ThemeResolver<'_>,
+    ) -> Vec<crate::layout::GroupObstacle> {
+        let pad = theme.group_padding();
+        graph
+            .groups
+            .iter()
+            .map(|group| {
+                let auto = compute_group_auto_bounds(group, &graph.nodes, |n| {
+                    self.node_bounds_for(n, theme)
+                });
+                let width = group
+                    .bounds
+                    .map(|b| b.width())
+                    .unwrap_or(auto.width() + pad * 2.0);
+                let hh = self.group_slots_for(group, width, theme).header.height();
+                let rect = group.bounds.unwrap_or_else(|| {
+                    if group.is_collapsed {
+                        Rect::new(
+                            auto.x() - pad,
+                            auto.y() - pad - hh,
+                            auto.width() + pad * 2.0,
+                            hh,
+                        )
+                    } else {
+                        Rect::new(
+                            auto.x() - pad,
+                            auto.y() - pad - hh,
+                            auto.width() + pad * 2.0,
+                            auto.height() + pad * 2.0 + hh,
+                        )
+                    }
+                });
+                crate::layout::GroupObstacle {
+                    rect,
+                    members: group.members.clone(),
+                }
+            })
+            .collect()
     }
 
     // ─── Callback registration (validators only) ─────────────────────
@@ -4702,8 +4821,11 @@ where
         // settles whatever overlap the drag introduced.
         let hint = self.pending_overlap_resolve.swap(false, Ordering::Relaxed);
         let drag_active = self.drag_state().is_active();
-        let sizes: ahash::AHashMap<NodeId, (f32, f32)> = if !drag_active {
-            frame
+        let (sizes, obstacles): (
+            ahash::AHashMap<NodeId, (f32, f32)>,
+            Vec<crate::layout::GroupObstacle>,
+        ) = if !drag_active {
+            let sizes = frame
                 .graph
                 .nodes
                 .iter()
@@ -4712,9 +4834,11 @@ where
                     let slots = self.node_slots_for(tpl, inst, &theme);
                     Some((inst.id.clone(), (slots.total_width, slots.total_height)))
                 })
-                .collect()
+                .collect();
+            let obstacles = self.group_obstacles(&frame.graph, &theme);
+            (sizes, obstacles)
         } else {
-            ahash::AHashMap::new()
+            (ahash::AHashMap::new(), Vec::new())
         };
 
         // Release the frame's read locks so the write lock below
@@ -4728,19 +4852,25 @@ where
             // Skip the write-lock acquisition when the layout is
             // already clean and the hint isn't asking us to
             // resolve — saves a lock upgrade + the redraw cost
-            // on idle frames.
+            // on idle frames. The detector uses the SAME sizes +
+            // obstacles + padding as the resolver, so it can't
+            // disagree about whether the layout is clean (else the
+            // pair would ping-pong: detector says dirty, resolver
+            // moves nothing → infinite redraw).
             let needs_resolve = hint
                 || crate::layout::has_any_overlap(
                     &g_read.nodes,
                     |id| sizes.get(id).copied().unwrap_or((180.0, 72.0)),
+                    &obstacles,
                     12.0,
                 );
             drop(g_read);
             if needs_resolve {
                 let mut g = self.graph.write().unwrap();
-                let moved = crate::layout::resolve_overlaps_in_place(
+                let moved = crate::layout::resolve_overlaps_in_place_with_groups(
                     &mut g.nodes,
                     |id| sizes.get(id).copied().unwrap_or((180.0, 72.0)),
+                    &obstacles,
                     12.0,
                 );
                 drop(g);

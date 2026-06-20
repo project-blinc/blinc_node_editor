@@ -9,8 +9,8 @@
 //! Fruchterman-Reingold-style repulsion + edge-spring attraction.
 
 use crate::connection::Connection;
-use crate::node::NodeInstance;
-use blinc_core::layer::Point;
+use crate::node::{NodeId, NodeInstance};
+use blinc_core::layer::{Point, Rect};
 
 // ─────────────────────────────────────────────────────────────────────
 // LayoutStrategy
@@ -353,8 +353,55 @@ fn apply_force_layout<N, M, G>(
 const KERNEL_EPSILON: f32 = 1e-3;
 
 // ─────────────────────────────────────────────────────────────────────
-// AABB overlap resolve (one-pass, deterministic)
+// AABB overlap resolve (edge-based, fixed-point, deterministic)
 // ─────────────────────────────────────────────────────────────────────
+//
+// CRITICAL: node positions are TOP-LEFT corners (see
+// `render::node_bounds` — `Rect::new(position.x, position.y, w, h)`),
+// NOT centres. All overlap math here is edge-based so it stays
+// correct for heterogeneous node sizes; a centre-based formula
+// (`|posA - posB|` vs `half_a + half_b`) is only right when both
+// nodes are the same size and silently under-detects / under-pushes
+// for mismatched sizes — which is the common case once fit-content
+// sizing kicks in. Keep it edge-based.
+
+/// A rectangular keep-out region — a group's painted chrome rect.
+/// Non-member nodes are pushed out of it; `members` are exempt
+/// (they belong inside their own group).
+pub struct GroupObstacle {
+    pub rect: Rect,
+    pub members: Vec<NodeId>,
+}
+
+/// Edge-based penetration of two padded AABBs given as top-left +
+/// size. Each rect is inflated by `half_pad` on every side, so two
+/// nodes settle `2 * half_pad` apart edge-to-edge. Returns the
+/// `(x, y)` penetration depths; the rects overlap iff BOTH are
+/// `> 0`.
+#[inline]
+fn aabb_penetration(
+    ax: f32,
+    ay: f32,
+    aw: f32,
+    ah: f32,
+    bx: f32,
+    by: f32,
+    bw: f32,
+    bh: f32,
+    half_pad: f32,
+) -> (f32, f32) {
+    let a_left = ax - half_pad;
+    let a_right = ax + aw + half_pad;
+    let a_top = ay - half_pad;
+    let a_bottom = ay + ah + half_pad;
+    let b_left = bx - half_pad;
+    let b_right = bx + bw + half_pad;
+    let b_top = by - half_pad;
+    let b_bottom = by + bh + half_pad;
+    let px = a_right.min(b_right) - a_left.max(b_left);
+    let py = a_bottom.min(b_bottom) - a_top.max(b_top);
+    (px, py)
+}
 
 /// Push apart any pair of nodes whose bounding boxes overlap.
 ///
@@ -362,31 +409,20 @@ const KERNEL_EPSILON: f32 = 1e-3;
 /// order, treat it as an immovable anchor for that pass, and shove
 /// any later neighbour that overlaps it along the shortest
 /// separation axis. The outer loop re-runs the cascade until a
-/// pass moves nothing (fixed point) or the iteration cap is hit
-/// — so a chain push (j → k → m → …) settles in O(chain length)
-/// passes inside a single call instead of dribbling out across
-/// frames.
+/// pass moves nothing (fixed point) or the iteration cap is hit —
+/// so a chain push (j → k → m → …) settles in O(chain length)
+/// passes inside a single call.
 ///
-/// Per-pass sketch:
-///   for anchor in 0..N:
-///       for j in anchor+1..N:
-///           if anchor and j overlap:
-///               translate j by the MTV (anchor stays put)
-///
-/// `padding` is added to each node's half-extent so the final
-/// layout leaves a visible gap rather than touching edge-to-edge.
+/// `padding` is the minimum edge-to-edge gap left between nodes.
 /// Deterministic + idempotent: a non-overlapping input is
-/// unchanged on output. Returns `true` if at least one position
-/// changed across all iterations, so the caller can use it as a
-/// "did anything happen" signal (e.g. to skip a redundant event
-/// emit).
+/// unchanged on output. Returns `true` if any position changed.
 pub fn resolve_overlaps_in_place<N, F>(
     nodes: &mut [NodeInstance<N>],
     mut size_of: F,
     padding: f32,
 ) -> bool
 where
-    F: FnMut(&crate::node::NodeId) -> (f32, f32),
+    F: FnMut(&NodeId) -> (f32, f32),
 {
     let n = nodes.len();
     if n < 2 {
@@ -403,16 +439,206 @@ where
     moved
 }
 
-/// Position-only variant of [`resolve_overlaps_in_place`] — same
-/// cascade with the same convergence guarantees, but operates on
-/// parallel `positions` + `sizes` slices so callers that hold node
-/// data behind a non-`Clone` metadata type can still run the
-/// resolver against scratch buffers (auto-layout's force-kernel
-/// output is the canonical case).
-///
-/// `positions[i]` and `sizes[i]` must describe the same node;
-/// they're consumed pairwise. Returns `true` if any position
-/// changed across all iterations.
+/// Node-node resolve plus group keep-out. Runs the node-node
+/// cascade and, in the same fixed-point loop, pushes any non-member
+/// node out of every [`GroupObstacle`] rect. Pushing a node out of
+/// a group may land it on another node, which the next iteration's
+/// node-node pass settles — hence the shared loop. `obstacles` are
+/// treated as static for the call (computed from member positions
+/// before the resolve); the editor recomputes them each call so
+/// staleness from members moving during the resolve converges
+/// across calls.
+pub fn resolve_overlaps_in_place_with_groups<N, F>(
+    nodes: &mut [NodeInstance<N>],
+    mut size_of: F,
+    obstacles: &[GroupObstacle],
+    padding: f32,
+) -> bool
+where
+    F: FnMut(&NodeId) -> (f32, f32),
+{
+    let n = nodes.len();
+    if n < 2 && obstacles.is_empty() {
+        return false;
+    }
+    let sizes: Vec<(f32, f32)> = nodes.iter().map(|n| size_of(&n.id)).collect();
+    // Member-exempt lookup per obstacle, by node index, so the hot
+    // loops don't do a linear `members.contains(id)` scan per node.
+    let exempt: Vec<Vec<bool>> = obstacles
+        .iter()
+        .map(|obs| {
+            nodes
+                .iter()
+                .map(|nd| obs.members.contains(&nd.id))
+                .collect()
+        })
+        .collect();
+    // First group index each node belongs to (None = ungrouped).
+    let group_of: Vec<Option<usize>> = nodes
+        .iter()
+        .map(|nd| {
+            obstacles
+                .iter()
+                .position(|obs| obs.members.contains(&nd.id))
+        })
+        .collect();
+    let rects: Vec<Rect> = obstacles.iter().map(|o| o.rect).collect();
+    let mut positions: Vec<Point> = nodes.iter().map(|nd| nd.position).collect();
+
+    let any_moved =
+        resolve_positions_core(&mut positions, &sizes, &rects, &exempt, &group_of, padding);
+
+    if any_moved {
+        for (nd, p) in nodes.iter_mut().zip(positions.iter()) {
+            nd.position = *p;
+        }
+    }
+    any_moved
+}
+
+/// Position-array group-aware resolve for callers that hold node
+/// data behind a non-`Clone` metadata type (auto-layout's
+/// force-kernel scratch). `group_rects[g]` is the keep-out rect for
+/// group `g`; `exempt[g][i]` is true when node `i` is a member of
+/// group `g`; `group_of[i]` is the first group index node `i`
+/// belongs to (`None` = ungrouped). All parallel to `positions` /
+/// `sizes`. Returns whether any position changed.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_overlaps_positions_with_groups(
+    positions: &mut [Point],
+    sizes: &[(f32, f32)],
+    group_rects: &[Rect],
+    exempt: &[Vec<bool>],
+    group_of: &[Option<usize>],
+    padding: f32,
+) -> bool {
+    resolve_positions_core(positions, sizes, group_rects, exempt, group_of, padding)
+}
+
+// Shared fixed-point core: node-node cascade (with the membership
+// guard) + group keep-out, iterated to convergence. All inputs are
+// index-parallel to `positions`.
+#[allow(clippy::too_many_arguments)]
+fn resolve_positions_core(
+    positions: &mut [Point],
+    sizes: &[(f32, f32)],
+    group_rects: &[Rect],
+    exempt: &[Vec<bool>],
+    group_of: &[Option<usize>],
+    padding: f32,
+) -> bool {
+    let n = positions.len();
+    let half_pad = padding * 0.5;
+    const MAX_ITERS: u32 = 24;
+    let mut any_moved = false;
+
+    for _iter in 0..MAX_ITERS {
+        let mut moved_this_pass = false;
+
+        // ── node ↔ node cascade ──────────────────────────────
+        for anchor in 0..n {
+            let (aw, ah) = sizes[anchor];
+            let ax = positions[anchor].x;
+            let ay = positions[anchor].y;
+            for j in (anchor + 1)..n {
+                // Membership guard: if j is grouped and the anchor is
+                // not in j's group, skip the node-node shove — moving
+                // j here could eject it from its group. The group
+                // keep-out pass ejects the outsider (the anchor)
+                // instead. Same-group pairs + ungrouped j fall
+                // through and resolve normally (a group auto-fits
+                // around its members, so separating two members just
+                // grows the group).
+                if let Some(gj) = group_of[j] {
+                    if group_of[anchor] != Some(gj) {
+                        continue;
+                    }
+                }
+                let (jw, jh) = sizes[j];
+                let (px, py) = aabb_penetration(
+                    ax,
+                    ay,
+                    aw,
+                    ah,
+                    positions[j].x,
+                    positions[j].y,
+                    jw,
+                    jh,
+                    half_pad,
+                );
+                if px <= 0.0 || py <= 0.0 {
+                    continue;
+                }
+                let a_cx = ax + aw * 0.5;
+                let a_cy = ay + ah * 0.5;
+                let j_cx = positions[j].x + jw * 0.5;
+                let j_cy = positions[j].y + jh * 0.5;
+                if px < py {
+                    let sign = if j_cx >= a_cx { 1.0 } else { -1.0 };
+                    positions[j].x += px * sign;
+                } else {
+                    let sign = if j_cy >= a_cy { 1.0 } else { -1.0 };
+                    positions[j].y += py * sign;
+                }
+                moved_this_pass = true;
+            }
+        }
+
+        // ── node ↔ group keep-out ────────────────────────────
+        for (oi, rect) in group_rects.iter().enumerate() {
+            let gl = rect.x();
+            let gt = rect.y();
+            let gr = rect.x() + rect.width();
+            let gb = rect.y() + rect.height();
+            for i in 0..n {
+                if exempt[oi][i] {
+                    continue; // members live inside their group
+                }
+                let (w, h) = sizes[i];
+                let nl = positions[i].x - half_pad;
+                let nr = positions[i].x + w + half_pad;
+                let nt = positions[i].y - half_pad;
+                let nb = positions[i].y + h + half_pad;
+                let px = gr.min(nr) - gl.max(nl);
+                let py = gb.min(nb) - gt.max(nt);
+                if px <= 0.0 || py <= 0.0 {
+                    continue; // clear of this group
+                }
+                let push_left = nr - gl;
+                let push_right = gr - nl;
+                let push_up = nb - gt;
+                let push_down = gb - nt;
+                let min_h = push_left.min(push_right);
+                let min_v = push_up.min(push_down);
+                if min_h <= min_v {
+                    if push_left <= push_right {
+                        positions[i].x -= push_left;
+                    } else {
+                        positions[i].x += push_right;
+                    }
+                } else if push_up <= push_down {
+                    positions[i].y -= push_up;
+                } else {
+                    positions[i].y += push_down;
+                }
+                moved_this_pass = true;
+            }
+        }
+
+        any_moved |= moved_this_pass;
+        if !moved_this_pass {
+            break;
+        }
+    }
+
+    any_moved
+}
+
+/// Position-only variant — same edge-based cascade with the same
+/// convergence guarantees, on parallel `positions` + `sizes`
+/// slices so callers without an `N: Clone` bound (auto-layout's
+/// force-kernel output) can run it against scratch buffers.
+/// Returns `true` if any position changed.
 pub fn resolve_overlaps_positions(
     positions: &mut [Point],
     sizes: &[(f32, f32)],
@@ -423,98 +649,113 @@ pub fn resolve_overlaps_positions(
     if n < 2 {
         return false;
     }
+    let half_pad = padding * 0.5;
 
     const MAX_ITERS: u32 = 16;
     let mut any_moved = false;
 
     for _iter in 0..MAX_ITERS {
         let mut moved_this_pass = false;
-
         for anchor in 0..n {
             let (aw, ah) = sizes[anchor];
-            let ahw = aw * 0.5 + padding;
-            let ahh = ah * 0.5 + padding;
             let ax = positions[anchor].x;
             let ay = positions[anchor].y;
-
             for j in (anchor + 1)..n {
                 let (jw, jh) = sizes[j];
-                let jhw = jw * 0.5 + padding;
-                let jhh = jh * 0.5 + padding;
-                let dx = positions[j].x - ax;
-                let dy = positions[j].y - ay;
-                let overlap_x = (ahw + jhw) - dx.abs();
-                let overlap_y = (ahh + jhh) - dy.abs();
-                if overlap_x <= 0.0 || overlap_y <= 0.0 {
+                let (px, py) = aabb_penetration(
+                    ax,
+                    ay,
+                    aw,
+                    ah,
+                    positions[j].x,
+                    positions[j].y,
+                    jw,
+                    jh,
+                    half_pad,
+                );
+                if px <= 0.0 || py <= 0.0 {
                     continue;
                 }
-
-                // Shortest axis = minimum-translation-vector. Sign
-                // preserves whichever side j is already on (don't
-                // teleport across the anchor). Co-aligned (zero
-                // delta) pairs get nudged along +x so the next pass
-                // has a non-degenerate axis.
-                if overlap_x < overlap_y {
-                    let sign = if dx > 0.0 {
-                        1.0
-                    } else if dx < 0.0 {
-                        -1.0
-                    } else {
-                        1.0
-                    };
-                    positions[j].x += overlap_x * sign;
+                let a_cx = ax + aw * 0.5;
+                let a_cy = ay + ah * 0.5;
+                let j_cx = positions[j].x + jw * 0.5;
+                let j_cy = positions[j].y + jh * 0.5;
+                if px < py {
+                    let sign = if j_cx >= a_cx { 1.0 } else { -1.0 };
+                    positions[j].x += px * sign;
                 } else {
-                    let sign = if dy > 0.0 {
-                        1.0
-                    } else if dy < 0.0 {
-                        -1.0
-                    } else {
-                        1.0
-                    };
-                    positions[j].y += overlap_y * sign;
+                    let sign = if j_cy >= a_cy { 1.0 } else { -1.0 };
+                    positions[j].y += py * sign;
                 }
                 moved_this_pass = true;
                 any_moved = true;
             }
         }
-
         if !moved_this_pass {
             break;
         }
     }
-
     any_moved
 }
 
 /// Cheap predicate — true if any pair of nodes' bounding boxes
-/// (inflated by `padding`) overlap. O(N²) but the inner check is
-/// six float ops, so N < a few hundred is negligible. Lets the
-/// editor short-circuit the resolve call when the layout is
-/// already clean.
-pub fn has_any_overlap<N, F>(nodes: &[NodeInstance<N>], mut size_of: F, padding: f32) -> bool
+/// (edge-based, inflated by `padding`) overlap, OR any non-member
+/// node overlaps a group obstacle. Lets the editor short-circuit
+/// the resolve when the layout is already clean. O(N² + N·G).
+pub fn has_any_overlap<N, F>(
+    nodes: &[NodeInstance<N>],
+    mut size_of: F,
+    obstacles: &[GroupObstacle],
+    padding: f32,
+) -> bool
 where
-    F: FnMut(&crate::node::NodeId) -> (f32, f32),
+    F: FnMut(&NodeId) -> (f32, f32),
 {
     let n = nodes.len();
-    if n < 2 {
-        return false;
-    }
     let sizes: Vec<(f32, f32)> = nodes.iter().map(|n| size_of(&n.id)).collect();
+    let half_pad = padding * 0.5;
+
     for i in 1..n {
         let (iw, ih) = sizes[i];
-        let ihw = iw * 0.5 + padding;
-        let ihh = ih * 0.5 + padding;
         for j in 0..i {
             let (jw, jh) = sizes[j];
-            let jhw = jw * 0.5 + padding;
-            let jhh = jh * 0.5 + padding;
-            let dx = (nodes[i].position.x - nodes[j].position.x).abs();
-            let dy = (nodes[i].position.y - nodes[j].position.y).abs();
-            if (ihw + jhw) - dx > 0.0 && (ihh + jhh) - dy > 0.0 {
+            let (px, py) = aabb_penetration(
+                nodes[i].position.x,
+                nodes[i].position.y,
+                iw,
+                ih,
+                nodes[j].position.x,
+                nodes[j].position.y,
+                jw,
+                jh,
+                half_pad,
+            );
+            if px > 0.0 && py > 0.0 {
                 return true;
             }
         }
     }
+
+    for obs in obstacles {
+        let gl = obs.rect.x();
+        let gt = obs.rect.y();
+        let gr = obs.rect.x() + obs.rect.width();
+        let gb = obs.rect.y() + obs.rect.height();
+        for i in 0..n {
+            if obs.members.contains(&nodes[i].id) {
+                continue;
+            }
+            let (w, h) = sizes[i];
+            let nl = nodes[i].position.x - half_pad;
+            let nr = nodes[i].position.x + w + half_pad;
+            let nt = nodes[i].position.y - half_pad;
+            let nb = nodes[i].position.y + h + half_pad;
+            if gr.min(nr) - gl.max(nl) > 0.0 && gb.min(nb) - gt.max(nt) > 0.0 {
+                return true;
+            }
+        }
+    }
+
     false
 }
 
@@ -1502,6 +1743,95 @@ mod tests {
             PortAddress::new(from.into(), "out"),
             PortAddress::new(to.into(), "in"),
         )
+    }
+
+    // Helper: does node `i` overlap node `j` given a size lookup?
+    // Edge-based (top-left + size), zero padding — pure geometry.
+    fn rects_overlap(
+        a: &NodeInstance<()>,
+        b: &NodeInstance<()>,
+        sa: (f32, f32),
+        sb: (f32, f32),
+    ) -> bool {
+        let (px, py) = aabb_penetration(
+            a.position.x,
+            a.position.y,
+            sa.0,
+            sa.1,
+            b.position.x,
+            b.position.y,
+            sb.0,
+            sb.1,
+            0.0,
+        );
+        px > 0.0 && py > 0.0
+    }
+
+    #[test]
+    fn resolve_separates_heterogeneous_sizes() {
+        // Regression: a centre-based overlap test treats top-left
+        // positions as centres and UNDER-detects when sizes differ.
+        // Wide node A (300×80) at x=100 spans [100,400]; narrow node
+        // B (100×80) at x=250 spans [250,350] — fully inside A in x,
+        // overlapping in y. Must be detected + separated.
+        let mut nodes = vec![node("wide", 100.0, 100.0), node("narrow", 250.0, 120.0)];
+        let sizes: std::collections::HashMap<&str, (f32, f32)> =
+            [("wide", (300.0, 80.0)), ("narrow", (100.0, 80.0))]
+                .into_iter()
+                .collect();
+        let size_of = |id: &NodeId| sizes[id.as_str()];
+
+        assert!(
+            has_any_overlap(&nodes, size_of, &[], 12.0),
+            "heterogeneous overlap must be detected (edge-based)"
+        );
+        let moved = resolve_overlaps_in_place(&mut nodes, size_of, 12.0);
+        assert!(moved, "resolver must move the overlapping pair");
+        assert!(
+            !has_any_overlap(&nodes, size_of, &[], 12.0),
+            "no overlap should remain after resolve"
+        );
+    }
+
+    #[test]
+    fn resolve_is_idempotent_when_clean() {
+        let mut nodes = vec![node("a", 0.0, 0.0), node("b", 400.0, 0.0)];
+        let size_of = |_: &NodeId| (180.0, 72.0);
+        let moved = resolve_overlaps_in_place(&mut nodes, size_of, 12.0);
+        assert!(!moved, "non-overlapping layout must be left untouched");
+    }
+
+    #[test]
+    fn group_keepout_ejects_nonmember() {
+        use crate::node::NodeId;
+        // Group rect covers [0,200]×[0,150]. A non-member node
+        // sitting inside it must be pushed out; a member is exempt.
+        let mut nodes = vec![node("member", 20.0, 20.0), node("outsider", 60.0, 60.0)];
+        let size_of = |_: &NodeId| (80.0, 50.0);
+        let obstacles = vec![GroupObstacle {
+            rect: Rect::new(0.0, 0.0, 200.0, 150.0),
+            members: vec![NodeId::from("member")],
+        }];
+        let moved = resolve_overlaps_in_place_with_groups(&mut nodes, size_of, &obstacles, 12.0);
+        assert!(moved, "outsider inside the group rect must be moved");
+
+        // Outsider must now be clear of the group rect.
+        let o = &nodes[1];
+        let (w, h) = (80.0_f32, 50.0_f32);
+        let clear = o.position.x + w <= 0.0
+            || o.position.x >= 200.0
+            || o.position.y + h <= 0.0
+            || o.position.y >= 150.0;
+        assert!(
+            clear,
+            "outsider should be ejected from the group chrome rect"
+        );
+        // Member must not have been ejected (still overlaps the rect).
+        let m = &nodes[0];
+        assert!(
+            m.position.x >= 0.0 && m.position.x < 200.0,
+            "member must stay inside its own group"
+        );
     }
 
     #[test]
