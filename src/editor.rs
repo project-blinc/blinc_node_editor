@@ -3695,287 +3695,30 @@ where
             grown
         };
 
-        // 1. Groups — drawn first so they sit behind everything.
+        // Pre-populate collapsed-group container rects BEFORE the
+        // connection pass. Connections are now drawn ahead of the
+        // group draw loop (so edges sit BEHIND group container
+        // chrome), but the edge router still needs each collapsed
+        // group's perimeter rect to merge incident edges. Mirror
+        // what the group loop stores: the nested-growth override
+        // when present, else the preliminary chrome rect.
         for group in &frame.graph.groups {
-            // Auto-bounds source per group:
-            //
-            // - Shift+drag of a member of THIS group: exclude the
-            //   dragged node from the auto-fit calc so the group
-            //   visually shrinks to its OTHER members' footprint
-            //   instead of growing to follow the node. Reads as
-            //   "the node is being torn out" while the gesture is
-            //   in flight. Reverts on drag-end when the preview
-            //   clears.
-            // - Otherwise: live auto-bounds (members union). The
-            //   `last_group_auto_bounds` cache keeps the chrome
-            //   anchored if the group has temporarily lost all
-            //   members (e.g. last member dragged out).
-            let live_auto_bounds = compute_group_auto_bounds(group, &frame.graph.nodes, |n| {
-                self.node_bounds_for(n, &theme)
-            });
-            let shift_excl_bounds = if preview.shift_held {
-                if let Some(n) = preview.dragged_node.as_ref() {
-                    if group.members.contains(n) {
-                        compute_group_auto_bounds_excluding(group, &frame.graph.nodes, n, |node| {
-                            self.node_bounds_for(node, &theme)
-                        })
-                    } else {
-                        None
-                    }
-                } else if let Some(dg) = preview.dragged_group.as_ref() {
-                    // Multi-node escape: the user is dragging a
-                    // group container by its chrome. Exclude EVERY
-                    // dragged-group member from the parent's
-                    // auto-bounds so the parent visually shrinks
-                    // around its remaining (stationary) members,
-                    // mirroring the single-node escape's affordance.
-                    let dragged_members: Vec<NodeId> = frame
-                        .graph
-                        .groups
-                        .iter()
-                        .find(|g| g.id == *dg)
-                        .map(|g| g.members.clone())
-                        .unwrap_or_default();
-                    if !dragged_members.is_empty()
-                        && dg != &group.id
-                        && dragged_members.iter().any(|m| group.members.contains(m))
-                    {
-                        compute_group_auto_bounds_excluding_set(
-                            group,
-                            &frame.graph.nodes,
-                            &dragged_members,
-                            |node| self.node_bounds_for(node, &theme),
-                        )
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            let has_members = group
-                .members
-                .iter()
-                .any(|m| frame.graph.nodes.iter().any(|n| n.id == *m));
-            let auto_bounds = if let Some(b) = shift_excl_bounds {
-                // Don't cache the shrunk bounds — we want the
-                // post-drag cache fallback to reflect the natural
-                // members-union footprint, not the transient drag
-                // state. Cache the live (full) bounds so a later
-                // empty-group state restores correctly.
-                if has_members {
-                    self.last_group_auto_bounds
-                        .write()
-                        .unwrap()
-                        .insert(group.id.clone(), live_auto_bounds);
-                }
-                b
-            } else if has_members {
-                self.last_group_auto_bounds
-                    .write()
-                    .unwrap()
-                    .insert(group.id.clone(), live_auto_bounds);
-                live_auto_bounds
-            } else {
-                self.last_group_auto_bounds
-                    .read()
-                    .unwrap()
-                    .get(&group.id)
-                    .copied()
-                    .unwrap_or(live_auto_bounds)
-            };
-            let pad = theme.group_padding();
-            let width = group
-                .bounds
-                .map(|b| b.width())
-                .unwrap_or(auto_bounds.width() + pad * 2.0);
-            let slots = self.group_slots_for(group, width, &theme);
-            // CanvasKit selection contains region IDs (`group:id`),
-            // not raw IDs — see the matching `node:` pattern below.
-            let region_id = RegionId::Group(group.id.clone()).encode();
-            let is_selected = frame.selection.selected.contains(&region_id);
-            let border_kind = if preview.remove_target.as_ref() == Some(&group.id) {
-                crate::render::GroupBorderKind::RemoveTarget
-            } else if preview.add_target.as_ref() == Some(&group.id) {
-                crate::render::GroupBorderKind::AddTarget
-            } else {
-                crate::render::GroupBorderKind::Normal
-            };
-            let group_badge_rect = draw_group(
-                ctx,
-                group,
-                auto_bounds,
-                &slots,
-                &theme,
-                is_selected,
-                border_kind,
-            );
-            if let (Some(rect), Some(badge)) = (group_badge_rect, group.badge.as_ref()) {
-                if badge.tooltip.is_some() {
-                    let region = RegionId::GroupBadge(group.id.clone()).encode();
-                    self.kit.hit_rect(region.clone(), rect);
-                    self.badge_rects.lock().unwrap().insert(region, rect);
-                }
-            }
-
-            // Header chrome — collapse / expand chevron. Painted on
-            // top of the header band; hit region registered after
-            // the group's body rect so the chrome wins the
-            // canvas-kit reverse-order hit-test against the body
-            // drag region.
-            //
-            // Delete is intentionally not part of the header chrome:
-            // group deletion fires from the keyboard handler (when a
-            // group region is selected and Delete / Backspace is
-            // pressed) AND from `EditorCommand::RemoveGroup` for
-            // programmatic / command-palette callers. Keeps the
-            // header readable when a group's title or badge would
-            // otherwise crowd the chrome.
-            let body_rect = group.bounds.unwrap_or_else(|| {
-                let natural = if group.is_collapsed {
-                    Rect::new(
-                        auto_bounds.x() - pad,
-                        auto_bounds.y() - pad - slots.header.height(),
-                        auto_bounds.width() + pad * 2.0,
-                        slots.header.height(),
-                    )
-                } else {
-                    Rect::new(
-                        auto_bounds.x() - pad,
-                        auto_bounds.y() - pad - slots.header.height(),
-                        auto_bounds.width() + pad * 2.0,
-                        auto_bounds.height() + pad * 2.0 + slots.header.height(),
-                    )
-                };
-                // Nested-group growth: if a subset group's body rect
-                // extends past this one's natural body rect, swap in
-                // the grown union so the outer group's footprint
-                // encloses the inner group's chrome (header + border)
-                // properly. Computed once in the pre-pass above.
-                nested_body_growth
-                    .get(&group.id)
-                    .copied()
-                    .map(|grown| {
-                        let nx = natural.x().min(grown.x());
-                        let ny = natural.y().min(grown.y());
-                        let nxe = (natural.x() + natural.width()).max(grown.x() + grown.width());
-                        let nye = (natural.y() + natural.height()).max(grown.y() + grown.height());
-                        Rect::new(nx, ny, nxe - nx, nye - ny)
-                    })
-                    .unwrap_or(natural)
-            });
-            // When `group.accent` is set, the header chrome (glyph
-            // + chip outline) needs a contrasting foreground so it
-            // stays readable on the accent band. `draw_group` /
-            // `draw_group_header_chrome` honour the override
-            // automatically when the group carries an accent.
-            let chrome_override = group.accent.map(|a| {
-                let lum = 0.299 * a.r + 0.587 * a.g + 0.114 * a.b;
-                if lum > 0.55 {
-                    blinc_core::layer::Color::rgba(0.08, 0.09, 0.12, 1.0)
-                } else {
-                    blinc_core::layer::Color::rgba(0.96, 0.96, 0.97, 1.0)
-                }
-            });
-            let chrome = crate::render::draw_group_header_chrome(
-                ctx,
-                group,
-                body_rect,
-                &slots,
-                &theme,
-                chrome_override,
-            );
-
-            // Hit region must match the DRAWN body rect — `auto_bounds`
-            // is just the member-node union (a strict sub-rect of the
-            // padded + header-extended body), so registering it as the
-            // hit shape leaves the visible chrome (header band +
-            // padding ring) as dead space. The pointer falls through
-            // to canvas-kit's background drag handler → drags pan the
-            // whole canvas instead of moving the group.
-            // Re-use the body_rect computed above for the drag-hit
-            // region — collapsed groups expose only the header band
-            // as the drag affordance; expanded groups use the full
-            // members-wrap rect.
-            self.kit.hit_rect(region_id, body_rect);
-
-            // Title + description hit regions for double-click-to-edit.
-            // The slot rects are NODE-LOCAL — translate to absolute
-            // canvas-content coords via the group body's top-left.
-            // Stash the absolute rects so the double-click listener
-            // installed in `new()` can derive a screen-space anchor
-            // for the host's inline editor overlay. Registered AFTER
-            // the group body so the reverse-order hit-test picks
-            // text first when the click falls inside the title /
-            // description bounding box.
-            //
-            // `body_rect` here is the visible group rect (header +
-            // padded body region). The slot tree's `header` rect is
-            // relative to that body's origin, so the title / desc
-            // rects in absolute canvas-content space are
-            // `body_rect.origin + slots.title` / `body_rect.origin +
-            // slots.description`.
-            let title_rect = Rect::new(
-                body_rect.x() + slots.title.x(),
-                body_rect.y() + slots.title.y(),
-                slots.title.width(),
-                slots.title.height(),
-            );
-            let title_region = RegionId::GroupTitle(group.id.clone()).encode();
-            self.kit.hit_rect(title_region.clone(), title_rect);
-            self.group_text_rects
-                .lock()
-                .unwrap()
-                .insert(title_region, title_rect);
-            if let Some(desc_slot) = slots.description {
-                let desc_rect = Rect::new(
-                    body_rect.x() + desc_slot.x(),
-                    body_rect.y() + desc_slot.y(),
-                    desc_slot.width(),
-                    desc_slot.height(),
-                );
-                let desc_region = RegionId::GroupDesc(group.id.clone()).encode();
-                self.kit.hit_rect(desc_region.clone(), desc_rect);
-                self.group_text_rects
-                    .lock()
-                    .unwrap()
-                    .insert(desc_region, desc_rect);
-            }
-
-            // Chrome hit regions MUST be registered after the group's
-            // body region. CanvasKit's hit-test scans regions in
-            // reverse insertion order (last inserted = topmost) —
-            // registering chrome BEFORE the body means the body
-            // rect wins for clicks inside the chrome, swallowing the
-            // affordance click. (Symptom: click logs land on
-            // `group:{id}` instead of `group_collapse:{id}`.) Edit
-            // and delete go in alongside the collapse chip — order
-            // among them doesn't matter (rects don't overlap), but
-            // keeping the visually-leftmost chip registered first
-            // mirrors the painted left-to-right flex order.
-            self.kit
-                .hit_rect(RegionId::GroupEdit(group.id.clone()).encode(), chrome.edit);
-            self.kit.hit_rect(
-                RegionId::GroupDelete(group.id.clone()).encode(),
-                chrome.delete,
-            );
-            self.kit.hit_rect(
-                RegionId::GroupCollapse(group.id.clone()).encode(),
-                chrome.collapse,
-            );
-
-            // Stash the body rect for collapsed groups so the edge
-            // loop can re-route incident connections to the nearest
-            // point on the perimeter.
             if group.is_collapsed {
-                collapsed_group_rects.insert(group.id.clone(), body_rect);
+                if let Some(r) = nested_body_growth
+                    .get(&group.id)
+                    .or_else(|| preliminary_bodies.get(&group.id))
+                {
+                    collapsed_group_rects.insert(group.id.clone(), *r);
+                }
             }
         }
 
-        // 2. Connections — drawn beneath nodes so endpoints sit on
-        //    top, with hover / select highlights.
+        // 1. Connections — drawn FIRST so they sit behind both the
+        //    group container chrome (pass 2) and the nodes (pass 3).
+        //    Endpoints still read as anchored because node bodies
+        //    paint on top. Collapsed-group perimeter rects were
+        //    pre-populated above so the router has them before the
+        //    group draw loop runs.
         let slot_lookup =
             |tpl: &NodeTemplate<K>, n: &NodeInstance<N>| self.node_slots_for(tpl, n, &theme);
         let hovered_edge = match self.hovered() {
@@ -4417,6 +4160,288 @@ where
                     conn.id,
                     crate::bezier::cubic_midpoint(from_pt, c1, c2, to_pt),
                 ));
+            }
+        }
+
+        // 2. Groups — drawn AFTER connections so the container
+        //    chrome sits on top of the edges (edges read as
+        //    flowing behind the group), but BEFORE nodes so member
+        //    node bodies still paint on top of their container.
+        for group in &frame.graph.groups {
+            // Auto-bounds source per group:
+            //
+            // - Shift+drag of a member of THIS group: exclude the
+            //   dragged node from the auto-fit calc so the group
+            //   visually shrinks to its OTHER members' footprint
+            //   instead of growing to follow the node. Reads as
+            //   "the node is being torn out" while the gesture is
+            //   in flight. Reverts on drag-end when the preview
+            //   clears.
+            // - Otherwise: live auto-bounds (members union). The
+            //   `last_group_auto_bounds` cache keeps the chrome
+            //   anchored if the group has temporarily lost all
+            //   members (e.g. last member dragged out).
+            let live_auto_bounds = compute_group_auto_bounds(group, &frame.graph.nodes, |n| {
+                self.node_bounds_for(n, &theme)
+            });
+            let shift_excl_bounds = if preview.shift_held {
+                if let Some(n) = preview.dragged_node.as_ref() {
+                    if group.members.contains(n) {
+                        compute_group_auto_bounds_excluding(group, &frame.graph.nodes, n, |node| {
+                            self.node_bounds_for(node, &theme)
+                        })
+                    } else {
+                        None
+                    }
+                } else if let Some(dg) = preview.dragged_group.as_ref() {
+                    // Multi-node escape: the user is dragging a
+                    // group container by its chrome. Exclude EVERY
+                    // dragged-group member from the parent's
+                    // auto-bounds so the parent visually shrinks
+                    // around its remaining (stationary) members,
+                    // mirroring the single-node escape's affordance.
+                    let dragged_members: Vec<NodeId> = frame
+                        .graph
+                        .groups
+                        .iter()
+                        .find(|g| g.id == *dg)
+                        .map(|g| g.members.clone())
+                        .unwrap_or_default();
+                    if !dragged_members.is_empty()
+                        && dg != &group.id
+                        && dragged_members.iter().any(|m| group.members.contains(m))
+                    {
+                        compute_group_auto_bounds_excluding_set(
+                            group,
+                            &frame.graph.nodes,
+                            &dragged_members,
+                            |node| self.node_bounds_for(node, &theme),
+                        )
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let has_members = group
+                .members
+                .iter()
+                .any(|m| frame.graph.nodes.iter().any(|n| n.id == *m));
+            let auto_bounds = if let Some(b) = shift_excl_bounds {
+                // Don't cache the shrunk bounds — we want the
+                // post-drag cache fallback to reflect the natural
+                // members-union footprint, not the transient drag
+                // state. Cache the live (full) bounds so a later
+                // empty-group state restores correctly.
+                if has_members {
+                    self.last_group_auto_bounds
+                        .write()
+                        .unwrap()
+                        .insert(group.id.clone(), live_auto_bounds);
+                }
+                b
+            } else if has_members {
+                self.last_group_auto_bounds
+                    .write()
+                    .unwrap()
+                    .insert(group.id.clone(), live_auto_bounds);
+                live_auto_bounds
+            } else {
+                self.last_group_auto_bounds
+                    .read()
+                    .unwrap()
+                    .get(&group.id)
+                    .copied()
+                    .unwrap_or(live_auto_bounds)
+            };
+            let pad = theme.group_padding();
+            let width = group
+                .bounds
+                .map(|b| b.width())
+                .unwrap_or(auto_bounds.width() + pad * 2.0);
+            let slots = self.group_slots_for(group, width, &theme);
+            // CanvasKit selection contains region IDs (`group:id`),
+            // not raw IDs — see the matching `node:` pattern below.
+            let region_id = RegionId::Group(group.id.clone()).encode();
+            let is_selected = frame.selection.selected.contains(&region_id);
+            let border_kind = if preview.remove_target.as_ref() == Some(&group.id) {
+                crate::render::GroupBorderKind::RemoveTarget
+            } else if preview.add_target.as_ref() == Some(&group.id) {
+                crate::render::GroupBorderKind::AddTarget
+            } else {
+                crate::render::GroupBorderKind::Normal
+            };
+            let group_badge_rect = draw_group(
+                ctx,
+                group,
+                auto_bounds,
+                &slots,
+                &theme,
+                is_selected,
+                border_kind,
+            );
+            if let (Some(rect), Some(badge)) = (group_badge_rect, group.badge.as_ref()) {
+                if badge.tooltip.is_some() {
+                    let region = RegionId::GroupBadge(group.id.clone()).encode();
+                    self.kit.hit_rect(region.clone(), rect);
+                    self.badge_rects.lock().unwrap().insert(region, rect);
+                }
+            }
+
+            // Header chrome — collapse / expand chevron. Painted on
+            // top of the header band; hit region registered after
+            // the group's body rect so the chrome wins the
+            // canvas-kit reverse-order hit-test against the body
+            // drag region.
+            //
+            // Delete is intentionally not part of the header chrome:
+            // group deletion fires from the keyboard handler (when a
+            // group region is selected and Delete / Backspace is
+            // pressed) AND from `EditorCommand::RemoveGroup` for
+            // programmatic / command-palette callers. Keeps the
+            // header readable when a group's title or badge would
+            // otherwise crowd the chrome.
+            let body_rect = group.bounds.unwrap_or_else(|| {
+                let natural = if group.is_collapsed {
+                    Rect::new(
+                        auto_bounds.x() - pad,
+                        auto_bounds.y() - pad - slots.header.height(),
+                        auto_bounds.width() + pad * 2.0,
+                        slots.header.height(),
+                    )
+                } else {
+                    Rect::new(
+                        auto_bounds.x() - pad,
+                        auto_bounds.y() - pad - slots.header.height(),
+                        auto_bounds.width() + pad * 2.0,
+                        auto_bounds.height() + pad * 2.0 + slots.header.height(),
+                    )
+                };
+                // Nested-group growth: if a subset group's body rect
+                // extends past this one's natural body rect, swap in
+                // the grown union so the outer group's footprint
+                // encloses the inner group's chrome (header + border)
+                // properly. Computed once in the pre-pass above.
+                nested_body_growth
+                    .get(&group.id)
+                    .copied()
+                    .map(|grown| {
+                        let nx = natural.x().min(grown.x());
+                        let ny = natural.y().min(grown.y());
+                        let nxe = (natural.x() + natural.width()).max(grown.x() + grown.width());
+                        let nye = (natural.y() + natural.height()).max(grown.y() + grown.height());
+                        Rect::new(nx, ny, nxe - nx, nye - ny)
+                    })
+                    .unwrap_or(natural)
+            });
+            // When `group.accent` is set, the header chrome (glyph
+            // + chip outline) needs a contrasting foreground so it
+            // stays readable on the accent band. `draw_group` /
+            // `draw_group_header_chrome` honour the override
+            // automatically when the group carries an accent.
+            let chrome_override = group.accent.map(|a| {
+                let lum = 0.299 * a.r + 0.587 * a.g + 0.114 * a.b;
+                if lum > 0.55 {
+                    blinc_core::layer::Color::rgba(0.08, 0.09, 0.12, 1.0)
+                } else {
+                    blinc_core::layer::Color::rgba(0.96, 0.96, 0.97, 1.0)
+                }
+            });
+            let chrome = crate::render::draw_group_header_chrome(
+                ctx,
+                group,
+                body_rect,
+                &slots,
+                &theme,
+                chrome_override,
+            );
+
+            // Hit region must match the DRAWN body rect — `auto_bounds`
+            // is just the member-node union (a strict sub-rect of the
+            // padded + header-extended body), so registering it as the
+            // hit shape leaves the visible chrome (header band +
+            // padding ring) as dead space. The pointer falls through
+            // to canvas-kit's background drag handler → drags pan the
+            // whole canvas instead of moving the group.
+            // Re-use the body_rect computed above for the drag-hit
+            // region — collapsed groups expose only the header band
+            // as the drag affordance; expanded groups use the full
+            // members-wrap rect.
+            self.kit.hit_rect(region_id, body_rect);
+
+            // Title + description hit regions for double-click-to-edit.
+            // The slot rects are NODE-LOCAL — translate to absolute
+            // canvas-content coords via the group body's top-left.
+            // Stash the absolute rects so the double-click listener
+            // installed in `new()` can derive a screen-space anchor
+            // for the host's inline editor overlay. Registered AFTER
+            // the group body so the reverse-order hit-test picks
+            // text first when the click falls inside the title /
+            // description bounding box.
+            //
+            // `body_rect` here is the visible group rect (header +
+            // padded body region). The slot tree's `header` rect is
+            // relative to that body's origin, so the title / desc
+            // rects in absolute canvas-content space are
+            // `body_rect.origin + slots.title` / `body_rect.origin +
+            // slots.description`.
+            let title_rect = Rect::new(
+                body_rect.x() + slots.title.x(),
+                body_rect.y() + slots.title.y(),
+                slots.title.width(),
+                slots.title.height(),
+            );
+            let title_region = RegionId::GroupTitle(group.id.clone()).encode();
+            self.kit.hit_rect(title_region.clone(), title_rect);
+            self.group_text_rects
+                .lock()
+                .unwrap()
+                .insert(title_region, title_rect);
+            if let Some(desc_slot) = slots.description {
+                let desc_rect = Rect::new(
+                    body_rect.x() + desc_slot.x(),
+                    body_rect.y() + desc_slot.y(),
+                    desc_slot.width(),
+                    desc_slot.height(),
+                );
+                let desc_region = RegionId::GroupDesc(group.id.clone()).encode();
+                self.kit.hit_rect(desc_region.clone(), desc_rect);
+                self.group_text_rects
+                    .lock()
+                    .unwrap()
+                    .insert(desc_region, desc_rect);
+            }
+
+            // Chrome hit regions MUST be registered after the group's
+            // body region. CanvasKit's hit-test scans regions in
+            // reverse insertion order (last inserted = topmost) —
+            // registering chrome BEFORE the body means the body
+            // rect wins for clicks inside the chrome, swallowing the
+            // affordance click. (Symptom: click logs land on
+            // `group:{id}` instead of `group_collapse:{id}`.) Edit
+            // and delete go in alongside the collapse chip — order
+            // among them doesn't matter (rects don't overlap), but
+            // keeping the visually-leftmost chip registered first
+            // mirrors the painted left-to-right flex order.
+            self.kit
+                .hit_rect(RegionId::GroupEdit(group.id.clone()).encode(), chrome.edit);
+            self.kit.hit_rect(
+                RegionId::GroupDelete(group.id.clone()).encode(),
+                chrome.delete,
+            );
+            self.kit.hit_rect(
+                RegionId::GroupCollapse(group.id.clone()).encode(),
+                chrome.collapse,
+            );
+
+            // Stash the body rect for collapsed groups so the edge
+            // loop can re-route incident connections to the nearest
+            // point on the perimeter.
+            if group.is_collapsed {
+                collapsed_group_rects.insert(group.id.clone(), body_rect);
             }
         }
 
