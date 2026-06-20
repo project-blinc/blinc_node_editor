@@ -2787,6 +2787,42 @@ where
         let positions = apply_layout(&strategy, &graph.nodes, &graph.connections, &graph.groups);
         drop(strategy);
 
+        // Resolve any residual AABB overlaps from the kernel's
+        // output — the force-directed kernel uses centre-distance
+        // repulsion + Coulomb falloff, which can leave nodes
+        // touching corners or marginally overlapping when the
+        // iteration cap is hit. The cascade pass is deterministic
+        // + idempotent, so layered / manual strategies (which
+        // also flow through this path) get the same guarantee.
+        let templates = self.templates.read().unwrap();
+        let theme_overrides = self.theme.read().unwrap();
+        let theme = ThemeResolver::new(&theme_overrides);
+        let sizes: ahash::AHashMap<NodeId, (f32, f32)> = graph
+            .nodes
+            .iter()
+            .filter_map(|inst| {
+                let tpl = templates.get(&inst.component)?;
+                let slots = self.node_slots_for(tpl, inst, &theme);
+                Some((inst.id.clone(), (slots.total_width, slots.total_height)))
+            })
+            .collect();
+        drop(theme);
+        drop(theme_overrides);
+        drop(templates);
+
+        // Apply the kernel's positions to scratch buffers and run
+        // the cascade resolver so the emitted LayoutApplied event
+        // is guaranteed overlap-free. Parallel arrays sidestep
+        // having to clone NodeInstance<N> (which would require an
+        // `N: Clone` bound this impl block deliberately omits).
+        let size_pairs: Vec<(f32, f32)> = graph
+            .nodes
+            .iter()
+            .map(|inst| sizes.get(&inst.id).copied().unwrap_or((180.0, 72.0)))
+            .collect();
+        let mut positions = positions;
+        crate::layout::resolve_overlaps_positions(&mut positions, &size_pairs, 12.0);
+
         let updates: Vec<(NodeId, Point)> = graph
             .nodes
             .iter()
@@ -3236,6 +3272,16 @@ where
                     blinc_layout::request_redraw();
                 }
             }
+
+            // Hint the next render_frame pass to settle any
+            // overlap the drag introduced. The per-frame resolver
+            // is suppressed while a drag is in flight (so the
+            // pointer wins in real time), so the catch-up has to
+            // fire here.
+            end_editor
+                .pending_overlap_resolve
+                .store(true, Ordering::Relaxed);
+            blinc_layout::request_redraw();
 
             // Port-drag in flight → finalise the connect attempt.
             // Check this BEFORE the node-drag branch so a port-drag
@@ -4639,15 +4685,24 @@ where
             visible_edges,
         });
 
-        // Drain the per-frame collision-resolve request. Any node's
-        // fit-content width or height changed → capture per-node
-        // real footprint (slot tree → total_width × total_height)
-        // while we still hold the frame's read locks, then drop
-        // the read locks and run the resolve under a write lock.
-        // Idempotent + deterministic; once positions converge the
-        // flag stays off until the next size change.
-        let resolve_overlaps = self.pending_overlap_resolve.swap(false, Ordering::Relaxed);
-        let sizes: ahash::AHashMap<NodeId, (f32, f32)> = if resolve_overlaps {
+        // Collision resolve — runs every frame the user isn't
+        // actively dragging a node. The `pending_overlap_resolve`
+        // flag (set on size change + drag-end) is a fast-path
+        // hint: when it's true we ALWAYS resolve; when it's false
+        // we still cheaply check `has_any_overlap` and resolve
+        // only if something snuck in (initial-state overlap
+        // before any size change, host programmatically set
+        // positions, etc.). The check is O(N²) on cheap
+        // arithmetic — well under a millisecond for the node
+        // counts we target.
+        //
+        // Suppressed while a drag is active so the resolver
+        // doesn't fight the user's pointer in real time. The
+        // drag-end handler sets the flag so the next frame
+        // settles whatever overlap the drag introduced.
+        let hint = self.pending_overlap_resolve.swap(false, Ordering::Relaxed);
+        let drag_active = self.drag_state().is_active();
+        let sizes: ahash::AHashMap<NodeId, (f32, f32)> = if !drag_active {
             frame
                 .graph
                 .nodes
@@ -4668,13 +4723,31 @@ where
         drop(theme);
         drop(frame);
 
-        if resolve_overlaps {
-            let mut g = self.graph.write().unwrap();
-            crate::layout::resolve_overlaps_in_place(
-                &mut g.nodes,
-                |id| sizes.get(id).copied().unwrap_or((180.0, 72.0)),
-                12.0,
-            );
+        if !drag_active && !sizes.is_empty() {
+            let g_read = self.graph.read().unwrap();
+            // Skip the write-lock acquisition when the layout is
+            // already clean and the hint isn't asking us to
+            // resolve — saves a lock upgrade + the redraw cost
+            // on idle frames.
+            let needs_resolve = hint
+                || crate::layout::has_any_overlap(
+                    &g_read.nodes,
+                    |id| sizes.get(id).copied().unwrap_or((180.0, 72.0)),
+                    12.0,
+                );
+            drop(g_read);
+            if needs_resolve {
+                let mut g = self.graph.write().unwrap();
+                let moved = crate::layout::resolve_overlaps_in_place(
+                    &mut g.nodes,
+                    |id| sizes.get(id).copied().unwrap_or((180.0, 72.0)),
+                    12.0,
+                );
+                drop(g);
+                if moved {
+                    blinc_layout::request_redraw();
+                }
+            }
         }
     }
 }

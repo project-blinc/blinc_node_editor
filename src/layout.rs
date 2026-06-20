@@ -357,74 +357,165 @@ const KERNEL_EPSILON: f32 = 1e-3;
 // ─────────────────────────────────────────────────────────────────────
 
 /// Push apart any pair of nodes whose bounding boxes overlap.
-/// Single-pass cascade: walk every node in input order, treat it
-/// as an immovable anchor, and shove any later neighbour that
-/// overlaps it along the shortest separation axis. Each node has
-/// already been "settled" relative to all earlier nodes by the
-/// time we process it as an anchor, so the cascade resolves the
-/// graph in one linear sweep.
 ///
-/// Sketch:
+/// Single-pass cascade per iteration: walk every node in input
+/// order, treat it as an immovable anchor for that pass, and shove
+/// any later neighbour that overlaps it along the shortest
+/// separation axis. The outer loop re-runs the cascade until a
+/// pass moves nothing (fixed point) or the iteration cap is hit
+/// — so a chain push (j → k → m → …) settles in O(chain length)
+/// passes inside a single call instead of dribbling out across
+/// frames.
+///
+/// Per-pass sketch:
 ///   for anchor in 0..N:
 ///       for j in anchor+1..N:
 ///           if anchor and j overlap:
 ///               translate j by the MTV (anchor stays put)
 ///
-/// Asymmetric on purpose — moving both nodes when only one is
-/// the "anchor" undoes prior cascades; this way the first node
-/// in the input is the global reference frame and downstream
-/// pushes propagate one step at a time. Used after content-
-/// driven size changes (fit-content width / height shifted)
-/// where a full force-directed layout would be both overkill
-/// and visually disruptive.
-///
 /// `padding` is added to each node's half-extent so the final
 /// layout leaves a visible gap rather than touching edge-to-edge.
 /// Deterministic + idempotent: a non-overlapping input is
-/// unchanged on output. The auto-trigger in the editor re-fires
-/// every frame size changes are detected, so any residual cascade
-/// (j pushed into a not-yet-anchored k) converges across frames.
-pub fn resolve_overlaps_in_place<N, F>(nodes: &mut [NodeInstance<N>], mut size_of: F, padding: f32)
+/// unchanged on output. Returns `true` if at least one position
+/// changed across all iterations, so the caller can use it as a
+/// "did anything happen" signal (e.g. to skip a redundant event
+/// emit).
+pub fn resolve_overlaps_in_place<N, F>(
+    nodes: &mut [NodeInstance<N>],
+    mut size_of: F,
+    padding: f32,
+) -> bool
 where
     F: FnMut(&crate::node::NodeId) -> (f32, f32),
 {
     let n = nodes.len();
     if n < 2 {
-        return;
+        return false;
     }
     let sizes: Vec<(f32, f32)> = nodes.iter().map(|n| size_of(&n.id)).collect();
+    let mut positions: Vec<Point> = nodes.iter().map(|n| n.position).collect();
+    let moved = resolve_overlaps_positions(&mut positions, &sizes, padding);
+    if moved {
+        for (n, p) in nodes.iter_mut().zip(positions.iter()) {
+            n.position = *p;
+        }
+    }
+    moved
+}
 
-    for anchor in 0..n {
-        let (aw, ah) = sizes[anchor];
-        let ahw = aw * 0.5 + padding;
-        let ahh = ah * 0.5 + padding;
-        let ax = nodes[anchor].position.x;
-        let ay = nodes[anchor].position.y;
+/// Position-only variant of [`resolve_overlaps_in_place`] — same
+/// cascade with the same convergence guarantees, but operates on
+/// parallel `positions` + `sizes` slices so callers that hold node
+/// data behind a non-`Clone` metadata type can still run the
+/// resolver against scratch buffers (auto-layout's force-kernel
+/// output is the canonical case).
+///
+/// `positions[i]` and `sizes[i]` must describe the same node;
+/// they're consumed pairwise. Returns `true` if any position
+/// changed across all iterations.
+pub fn resolve_overlaps_positions(
+    positions: &mut [Point],
+    sizes: &[(f32, f32)],
+    padding: f32,
+) -> bool {
+    let n = positions.len();
+    debug_assert_eq!(positions.len(), sizes.len());
+    if n < 2 {
+        return false;
+    }
 
-        for j in (anchor + 1)..n {
+    const MAX_ITERS: u32 = 16;
+    let mut any_moved = false;
+
+    for _iter in 0..MAX_ITERS {
+        let mut moved_this_pass = false;
+
+        for anchor in 0..n {
+            let (aw, ah) = sizes[anchor];
+            let ahw = aw * 0.5 + padding;
+            let ahh = ah * 0.5 + padding;
+            let ax = positions[anchor].x;
+            let ay = positions[anchor].y;
+
+            for j in (anchor + 1)..n {
+                let (jw, jh) = sizes[j];
+                let jhw = jw * 0.5 + padding;
+                let jhh = jh * 0.5 + padding;
+                let dx = positions[j].x - ax;
+                let dy = positions[j].y - ay;
+                let overlap_x = (ahw + jhw) - dx.abs();
+                let overlap_y = (ahh + jhh) - dy.abs();
+                if overlap_x <= 0.0 || overlap_y <= 0.0 {
+                    continue;
+                }
+
+                // Shortest axis = minimum-translation-vector. Sign
+                // preserves whichever side j is already on (don't
+                // teleport across the anchor). Co-aligned (zero
+                // delta) pairs get nudged along +x so the next pass
+                // has a non-degenerate axis.
+                if overlap_x < overlap_y {
+                    let sign = if dx > 0.0 {
+                        1.0
+                    } else if dx < 0.0 {
+                        -1.0
+                    } else {
+                        1.0
+                    };
+                    positions[j].x += overlap_x * sign;
+                } else {
+                    let sign = if dy > 0.0 {
+                        1.0
+                    } else if dy < 0.0 {
+                        -1.0
+                    } else {
+                        1.0
+                    };
+                    positions[j].y += overlap_y * sign;
+                }
+                moved_this_pass = true;
+                any_moved = true;
+            }
+        }
+
+        if !moved_this_pass {
+            break;
+        }
+    }
+
+    any_moved
+}
+
+/// Cheap predicate — true if any pair of nodes' bounding boxes
+/// (inflated by `padding`) overlap. O(N²) but the inner check is
+/// six float ops, so N < a few hundred is negligible. Lets the
+/// editor short-circuit the resolve call when the layout is
+/// already clean.
+pub fn has_any_overlap<N, F>(nodes: &[NodeInstance<N>], mut size_of: F, padding: f32) -> bool
+where
+    F: FnMut(&crate::node::NodeId) -> (f32, f32),
+{
+    let n = nodes.len();
+    if n < 2 {
+        return false;
+    }
+    let sizes: Vec<(f32, f32)> = nodes.iter().map(|n| size_of(&n.id)).collect();
+    for i in 1..n {
+        let (iw, ih) = sizes[i];
+        let ihw = iw * 0.5 + padding;
+        let ihh = ih * 0.5 + padding;
+        for j in 0..i {
             let (jw, jh) = sizes[j];
             let jhw = jw * 0.5 + padding;
             let jhh = jh * 0.5 + padding;
-            let dx = nodes[j].position.x - ax;
-            let dy = nodes[j].position.y - ay;
-            let overlap_x = (ahw + jhw) - dx.abs();
-            let overlap_y = (ahh + jhh) - dy.abs();
-            if overlap_x <= 0.0 || overlap_y <= 0.0 {
-                continue;
-            }
-
-            // Shortest axis = minimum-translation-vector. Sign
-            // preserves whichever side j is already on (don't
-            // teleport it across the anchor).
-            if overlap_x < overlap_y {
-                let sign = if dx >= 0.0 { 1.0 } else { -1.0 };
-                nodes[j].position.x += overlap_x * sign;
-            } else {
-                let sign = if dy >= 0.0 { 1.0 } else { -1.0 };
-                nodes[j].position.y += overlap_y * sign;
+            let dx = (nodes[i].position.x - nodes[j].position.x).abs();
+            let dy = (nodes[i].position.y - nodes[j].position.y).abs();
+            if (ihw + jhw) - dx > 0.0 && (ihh + jhh) - dy > 0.0 {
+                return true;
             }
         }
     }
+    false
 }
 
 /// Spiral-out nudge for any pair of nodes landing on the same
