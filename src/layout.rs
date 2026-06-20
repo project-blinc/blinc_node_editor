@@ -384,11 +384,8 @@ const KERNEL_EPSILON: f32 = 1e-3;
 /// unchanged on output. The auto-trigger in the editor re-fires
 /// every frame size changes are detected, so any residual cascade
 /// (j pushed into a not-yet-anchored k) converges across frames.
-pub fn resolve_overlaps_in_place<N, F>(
-    nodes: &mut [NodeInstance<N>],
-    mut size_of: F,
-    padding: f32,
-) where
+pub fn resolve_overlaps_in_place<N, F>(nodes: &mut [NodeInstance<N>], mut size_of: F, padding: f32)
+where
     F: FnMut(&crate::node::NodeId) -> (f32, f32),
 {
     let n = nodes.len();

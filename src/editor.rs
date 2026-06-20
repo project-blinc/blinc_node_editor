@@ -4646,9 +4646,7 @@ where
         // the read locks and run the resolve under a write lock.
         // Idempotent + deterministic; once positions converge the
         // flag stays off until the next size change.
-        let resolve_overlaps = self
-            .pending_overlap_resolve
-            .swap(false, Ordering::Relaxed);
+        let resolve_overlaps = self.pending_overlap_resolve.swap(false, Ordering::Relaxed);
         let sizes: ahash::AHashMap<NodeId, (f32, f32)> = if resolve_overlaps {
             frame
                 .graph
