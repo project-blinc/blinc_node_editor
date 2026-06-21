@@ -175,7 +175,9 @@ Quick actions on selected nodes — pure-math helpers + thin editor wrappers.
 
 ## Tier 6 — Command + Event API (host-as-driver, Blinc-signal-native)
 
-**Palette / inspector / search bar / zoom HUD / minimap are all host concerns.** Domain-specific UI varies per app (some hosts have a sidebar palette, some a top-down command palette; some want zoom controls in a toolbar, some want them in a status bar). The editor exposes a typed command channel (host → editor) and a SIGNAL channel (editor → host) so any host UI can drive the canvas and observe state reactively. The editor never ships these widgets.
+**Palette / inspector / search bar / zoom HUD are host concerns.** Domain-specific UI varies per app (some hosts have a sidebar palette, some a top-down command palette; some want zoom controls in a toolbar, some want them in a status bar). The editor exposes a typed command channel (host → editor) and a SIGNAL channel (editor → host) so any host UI can drive the canvas and observe state reactively. The editor never ships those widgets.
+
+**Exception — the minimap is editor core** (shipped, see §6.6). It is the one navigation surface that is generic across every host (a scaled overview + draggable viewport rect), depends only on the editor's own camera + graph bounds, and benefits from being painted inside the canvas's coordinate frame. So it lives in the editor rather than being re-implemented per host; it is config-toggled and on by default.
 
 **The building blocks already exist in `blinc_canvas_kit`** — hosts compose their own UI on top of them:
 - `kit.viewport_signal()` → reactive viewport (zoom, pan)
@@ -187,7 +189,7 @@ Quick actions on selected nodes — pure-math helpers + thin editor wrappers.
 
 The node editor adds graph-level signals on top (`graph_signal`, `drag_state_signal`, events queue) — see §6.3 below.
 
-See [`examples/canvas_kit_demo.rs::viewport_hud`](../../examples/blinc_app_examples/examples/canvas_kit_demo.rs) for the pattern: a `Stateful` widget with `.deps([kit.viewport_signal()])` re-renders on viewport change, reads `kit.viewport()` for the live value. Identical pattern works for a minimap, zoom controls, breadcrumb bar, info HUD, etc.
+See [`examples/canvas_kit_demo.rs::viewport_hud`](../../examples/blinc_app_examples/examples/canvas_kit_demo.rs) for the pattern: a `Stateful` widget with `.deps([kit.viewport_signal()])` re-renders on viewport change, reads `kit.viewport()` for the live value. Identical pattern works for zoom controls, a breadcrumb bar, an info HUD, etc. (The minimap used to be cited here as a host pattern; it now ships in core — §6.6.)
 
 Callbacks are NOT the primary surface: Blinc's UI is built around `Signal<T>` + `derived(...)` + `effect(...)`, and threading callbacks into a reactive component is awkward (you end up bridging the callback's `Send + Sync` closure into a `State<T>` manually). State the host observes lives in signals. Synchronous responses (validation) stay as callbacks — they're the only places where the editor needs an answer mid-event, before the host can react.
 
@@ -296,12 +298,14 @@ Validators need a SYNCHRONOUS response from the host while the user is mid-drag 
 
 ### 6.6 What stays in the editor crate as types-only
 
-Helper TYPE definitions stay (so hosts speak a shared vocabulary when implementing palette / inspector / search / minimap / zoom HUD):
+Helper TYPE definitions stay (so hosts speak a shared vocabulary when implementing palette / inspector / search / zoom HUD):
 - `palette::{PaletteQuery, PaletteInsertRequest, filter_templates}` — types + filter helper
 - `inspector::InspectorPatchRequest` — patch event shape
 
+What ships in core:
+- **`minimap` module — SHIPPED.** Reversed the earlier "delete it" decision: the minimap is now a built-in editor feature (`MinimapConfig`, `Corner`, `with_minimap` / `set_minimap_enabled` / `minimap_config`), painted inside the canvas under the inverse-viewport transform, click/drag to navigate. See §6.6 below. The other host surfaces (palette, inspector, search) still stay host-built from the signals.
+
 What goes away:
-- `Minimap` struct in `minimap.rs` (delete the module — hosts build their own minimap reactively from `kit.viewport_signal()` + the editor's graph signal)
 - Most event callbacks (`on_node_drag`, `on_create_group_request`, `on_connect_accepted`, …) — replaced by `events_signal` + `drain_events`
 - Any "widget" pretense in `palette.rs` / `inspector.rs` — keep as type modules only
 
@@ -314,7 +318,7 @@ A `NodeEditorController` trait that exposes just the command + event API (withou
 Helper TYPE definitions stay (so hosts speak a shared vocabulary):
 - `palette::{PaletteQuery, PaletteInsertRequest, filter_templates}` — types + filter helper
 - `inspector::InspectorPatchRequest` — patch event shape
-- (No `minimap` module — was reserved for a widget that's no longer in scope)
+- `minimap` module — SHIPPED in core (`MinimapConfig` / `Corner` / `MinimapHit`); see §6.6. (Earlier this read "no minimap module — out of scope"; that decision was reversed.)
 
 What goes away:
 - `Minimap` struct (delete `minimap.rs`)
