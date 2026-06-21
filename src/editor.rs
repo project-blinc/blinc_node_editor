@@ -243,6 +243,23 @@ pub struct NodeEditor<K: PortKind, N, C, G> {
     group_slots: GroupSlotCache,
     layout_strategy: Arc<RwLock<LayoutStrategy>>,
 
+    /// Minimap appearance + placement. Default enabled, bottom-right.
+    /// Visual-only, so swapping at runtime needs no slot invalidation.
+    minimap_config: Arc<RwLock<crate::minimap::MinimapConfig>>,
+    /// Per-frame minimap geometry cache: the screen-px rect the graph
+    /// maps into + the world bbox it represents. Written in
+    /// `render_frame`'s minimap pass, read by the pointer handlers to
+    /// turn a click/drag inside the panel into a camera move. `None`
+    /// when the minimap didn't draw this frame (disabled / degenerate).
+    minimap_hit: Arc<RwLock<Option<crate::minimap::MinimapHit>>>,
+    /// Selection set snapshotted on every POINTER_DOWN, BEFORE
+    /// canvas-kit's down handler replaces it. The minimap press would
+    /// otherwise clobber the user's node selection (a plain click on the
+    /// minimap hit region replaces the selection with just the minimap
+    /// id); the handlers restore this snapshot so navigating via the
+    /// minimap leaves the selection untouched.
+    presel: Arc<RwLock<HashSet<String>>>,
+
     // ── Reactive state ─────────────────────────────────────────────
     /// Monotonic counter bumped on every graph mutation; reading code
     /// uses the `signal_id` for `derived`/`stateful().deps()`.
@@ -455,6 +472,9 @@ impl<K: PortKind, N, C, G> Clone for NodeEditor<K, N, C, G> {
             node_slots: self.node_slots.clone(),
             group_slots: self.group_slots.clone(),
             layout_strategy: self.layout_strategy.clone(),
+            minimap_config: self.minimap_config.clone(),
+            minimap_hit: self.minimap_hit.clone(),
+            presel: self.presel.clone(),
             graph_rev: self.graph_rev.clone(),
             drag_state: self.drag_state.clone(),
             hover_state: self.hover_state.clone(),
@@ -685,6 +705,9 @@ where
             node_slots: Arc::new(RwLock::new(AHashMap::new())),
             group_slots: Arc::new(RwLock::new(AHashMap::new())),
             layout_strategy: Arc::new(RwLock::new(LayoutStrategy::default())),
+            minimap_config: Arc::new(RwLock::new(crate::minimap::MinimapConfig::default())),
+            minimap_hit: Arc::new(RwLock::new(None)),
+            presel: Arc::new(RwLock::new(HashSet::new())),
             graph_rev: ctx.use_state_keyed(&format!("{key}_ne_graph"), || 0u64),
             drag_state: ctx.use_state_keyed(&format!("{key}_ne_drag"), DragConnect::default),
             hover_state: ctx
@@ -846,6 +869,34 @@ where
     /// strategy and emit the resulting `LayoutApplied` event.
     pub fn set_layout_strategy(&self, strategy: LayoutStrategy) {
         *self.layout_strategy.write().unwrap() = strategy;
+    }
+
+    /// Configure the minimap — a screen-pinned overview panel with a
+    /// draggable viewport indicator. Enabled by default in the
+    /// bottom-right corner; pass a [`MinimapConfig`] to relocate,
+    /// resize, or disable it.
+    ///
+    /// ```ignore
+    /// use blinc_node_editor::minimap::{Corner, MinimapConfig};
+    /// let editor = NodeEditor::new("graph").with_minimap(MinimapConfig {
+    ///     corner: Corner::BottomLeft,
+    ///     ..Default::default()
+    /// });
+    /// ```
+    pub fn with_minimap(self, config: crate::minimap::MinimapConfig) -> Self {
+        *self.minimap_config.write().unwrap() = config;
+        self
+    }
+
+    /// Runtime sibling of [`Self::with_minimap`] — toggle the minimap
+    /// on a live editor without rebuilding it.
+    pub fn set_minimap_enabled(&self, enabled: bool) {
+        self.minimap_config.write().unwrap().enabled = enabled;
+    }
+
+    /// Current minimap configuration.
+    pub fn minimap_config(&self) -> crate::minimap::MinimapConfig {
+        *self.minimap_config.read().unwrap()
     }
 
     /// Set the canvas background (grid, dots, solid, etc.). Falls
@@ -1974,6 +2025,54 @@ where
         self.kit.viewport()
     }
 
+    /// Recenter the camera on the world point under a screen-pixel
+    /// position inside the minimap panel, keeping the current zoom.
+    /// Called by the pointer handlers when a click/drag lands on the
+    /// minimap hit region. No-op when the minimap didn't draw this
+    /// frame (no cached geometry) or the canvas is pre-paint.
+    ///
+    /// `animate` tweens the camera (used for a click — a discrete jump
+    /// reads better as a glide); a drag passes `false` so the camera
+    /// tracks the cursor 1:1 (a tween would lag behind and fight the
+    /// drag).
+    fn minimap_navigate(&self, screen_x: f32, screen_y: f32, animate: bool) {
+        let Some(hit) = *self.minimap_hit.read().unwrap() else {
+            return;
+        };
+        let (sw, sh) = self.kit.screen_bounds();
+        if sw <= 0.0 || sh <= 0.0 {
+            return;
+        }
+        let (tx, ty) = hit.screen_to_world(screen_x, screen_y);
+        let z = self.kit.viewport().zoom;
+        // Pan that centres world point (tx,ty): screen = z*(content+pan)
+        // => pan = screen_centre/z - content.
+        let pan_x = sw * 0.5 / z - tx;
+        let pan_y = sh * 0.5 / z - ty;
+        if animate {
+            self.animate_viewport_to(pan_x, pan_y, z, VIEWPORT_TWEEN_MS);
+        } else {
+            // Instant tracking. Cancel any in-flight tween (e.g. from a
+            // click immediately before this drag) so it doesn't fight
+            // the per-frame writes below.
+            self.cancel_viewport_animation();
+            self.set_viewport(z, Point::new(pan_x, pan_y));
+        }
+
+        // The minimap press replaced the selection with just the
+        // minimap region id; restore the pre-press selection so
+        // navigating doesn't drop the user's node selection. Guarded so
+        // it only fires once per gesture (after the restore the id is
+        // gone, so subsequent drag frames skip it — no callback spam).
+        let cur = self.kit.selection().selected;
+        if cur.contains(crate::minimap::MINIMAP_REGION) {
+            let mut restored = self.presel.read().unwrap().clone();
+            restored.remove(crate::minimap::MINIMAP_REGION);
+            self.kit.set_selection(restored);
+        }
+        blinc_layout::request_redraw();
+    }
+
     /// Visible canvas-content rect padded by 25 % of the viewport
     /// extent on each axis. Used by the frustum-cull pass to skip
     /// off-screen nodes / edges in the render loop — the slack keeps
@@ -2525,6 +2624,21 @@ where
         });
         if let Some(id) = cb_id {
             *self.viewport_anim_cb_id.lock().unwrap() = Some(id);
+        }
+    }
+
+    /// Stop an in-flight viewport tween and unregister its scheduler
+    /// tick callback. Clearing `viewport_anim` alone would leave the
+    /// tick registered (it early-returns on `None`), pinning the
+    /// scheduler awake — so the callback id must be removed too. Lock
+    /// order (anim then cb_id) matches `animate_viewport_to` and the
+    /// tick body, so this can't deadlock against either.
+    fn cancel_viewport_animation(&self) {
+        *self.viewport_anim.lock().unwrap() = None;
+        if let Some(id) = self.viewport_anim_cb_id.lock().unwrap().take() {
+            if let Some(s) = blinc_layout::get_global_scheduler() {
+                s.remove_tick_callback(id);
+            }
         }
     }
 
@@ -3186,6 +3300,12 @@ where
             let Some(region_id) = evt.region_id.as_deref() else {
                 return;
             };
+            // Minimap click → recenter the camera. Handled before the
+            // typed RegionId match (the minimap id is a raw string).
+            if region_id == crate::minimap::MINIMAP_REGION {
+                click_editor.minimap_navigate(evt.screen_point.x, evt.screen_point.y, true);
+                return;
+            }
             tracing::debug!(
                 target: "blinc_node_editor::click",
                 region = region_id,
@@ -3322,6 +3442,15 @@ where
                 return;
             }
 
+            // Minimap drag → recenter the camera. Must run BEFORE the
+            // typed routing below: the minimap region is a raw string,
+            // and falling through would reach `apply_drag_delta` and
+            // move graph nodes.
+            if evt.region_id == crate::minimap::MINIMAP_REGION {
+                drag_editor.minimap_navigate(evt.screen_point.x, evt.screen_point.y, false);
+                return;
+            }
+
             // Parse once; reuse for routing + group/node disambiguation.
             let parsed = RegionId::parse(&evt.region_id);
 
@@ -3380,6 +3509,13 @@ where
         // Drag-end: dispatch by what was being dragged.
         let end_editor = self.clone();
         self.kit.on_element_drag_end(move |evt| {
+            // Minimap drag-end is purely a camera gesture — skip every
+            // graph side effect below (overlap-resolve hint, node/group
+            // settle callbacks).
+            if evt.region_id.as_deref() == Some(crate::minimap::MINIMAP_REGION) {
+                return;
+            }
+
             // Always clear the live drag-into / drag-out preview at
             // drag-end. Stale highlights would otherwise linger on
             // groups until the next drag tick reset them.
@@ -3486,6 +3622,13 @@ where
             ) {
                 *pos_editor.last_screen_pos.write().unwrap() =
                     Some(Point::new(evt.local_x, evt.local_y));
+            }
+            // Snapshot the selection BEFORE canvas-kit's POINTER_DOWN
+            // handler mutates it (any-event subscribers fire first). The
+            // minimap navigate handler restores this so a minimap press
+            // doesn't clobber the user's node selection.
+            if evt.event_type == event_types::POINTER_DOWN {
+                *pos_editor.presel.write().unwrap() = pos_editor.kit.selection().selected;
             }
         });
 
@@ -4771,6 +4914,117 @@ where
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // ── Pass 8: minimap overlay ──────────────────────────────────
+        // Screen-pinned overview with a draggable viewport indicator,
+        // drawn last so it composites above all graph content. Its hit
+        // region is registered here too — after every node/group/edge
+        // region — so it wins the reverse-order hit test over the panel.
+        {
+            let cfg = *self.minimap_config.read().unwrap();
+            let (sw, sh) = self.kit.screen_bounds();
+            if cfg.enabled && sw > 0.0 && sh > 0.0 {
+                let mut nodes: Vec<(Rect, bool)> = Vec::with_capacity(frame.graph.nodes.len());
+                let mut groups: Vec<Rect> = Vec::with_capacity(frame.graph.groups.len());
+                let mut min_x = f32::MAX;
+                let mut min_y = f32::MAX;
+                let mut max_x = f32::MIN;
+                let mut max_y = f32::MIN;
+
+                // Node dots — skip collapsed-group members (hidden in
+                // the main view, so hidden here too for consistency).
+                for node in &frame.graph.nodes {
+                    if hidden_nodes.contains(&node.id) {
+                        continue;
+                    }
+                    let b = self.node_bounds_for(node, &theme);
+                    min_x = min_x.min(b.x());
+                    min_y = min_y.min(b.y());
+                    max_x = max_x.max(b.x() + b.width());
+                    max_y = max_y.max(b.y() + b.height());
+                    let region = RegionId::Node(node.id.clone()).encode();
+                    let selected = frame.selection.selected.contains(&region);
+                    nodes.push((b, selected));
+                }
+                // Group footprints.
+                for group in &frame.graph.groups {
+                    let b = group.bounds.unwrap_or_else(|| {
+                        compute_group_auto_bounds(group, &frame.graph.nodes, |n| {
+                            self.node_bounds_for(n, &theme)
+                        })
+                    });
+                    min_x = min_x.min(b.x());
+                    min_y = min_y.min(b.y());
+                    max_x = max_x.max(b.x() + b.width());
+                    max_y = max_y.max(b.y() + b.height());
+                    groups.push(b);
+                }
+
+                // What the camera currently shows, in world space.
+                let vtl = self.kit.screen_to_content(Point::new(0.0, 0.0));
+                let vbr = self.kit.screen_to_content(Point::new(sw, sh));
+                let visible_world = Rect::new(
+                    vtl.x.min(vbr.x),
+                    vtl.y.min(vbr.y),
+                    (vbr.x - vtl.x).abs(),
+                    (vbr.y - vtl.y).abs(),
+                );
+
+                // Graph bbox (padded a hair); fall back to the visible
+                // rect for an empty graph so the scale isn't degenerate.
+                let world_bbox = if max_x > min_x && max_y > min_y {
+                    let pad_x = (max_x - min_x) * 0.06 + 1.0;
+                    let pad_y = (max_y - min_y) * 0.06 + 1.0;
+                    Rect::new(
+                        min_x - pad_x,
+                        min_y - pad_y,
+                        (max_x - min_x) + pad_x * 2.0,
+                        (max_y - min_y) + pad_y * 2.0,
+                    )
+                } else {
+                    visible_world
+                };
+
+                let panel = cfg.panel_rect(sw, sh);
+                let content_screen = crate::render::draw_minimap(
+                    ctx,
+                    panel,
+                    cfg.padding,
+                    world_bbox,
+                    visible_world,
+                    &nodes,
+                    &groups,
+                    &theme,
+                    self.kit.viewport().transform(),
+                );
+
+                *self.minimap_hit.write().unwrap() = Some(crate::minimap::MinimapHit {
+                    content_screen,
+                    world_bbox,
+                });
+
+                // Hit region = content-space pre-image of the fixed
+                // screen panel, so the content-space hit test resolves
+                // panel clicks at any pan/zoom.
+                let htl = self.kit.screen_to_content(Point::new(panel.x(), panel.y()));
+                let hbr = self
+                    .kit
+                    .screen_to_content(Point::new(panel.x() + panel.width(), panel.y() + panel.height()));
+                self.kit.hit_rect(
+                    crate::minimap::MINIMAP_REGION,
+                    Rect::new(
+                        htl.x.min(hbr.x),
+                        htl.y.min(hbr.y),
+                        (hbr.x - htl.x).abs(),
+                        (hbr.y - htl.y).abs(),
+                    ),
+                );
+            } else {
+                // Disabled / pre-paint: drop stale geometry so the
+                // pointer handlers don't act on a panel that isn't drawn.
+                *self.minimap_hit.write().unwrap() = None;
             }
         }
 

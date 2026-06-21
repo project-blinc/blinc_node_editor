@@ -61,6 +61,7 @@ pub mod icon;
 pub mod inspector;
 pub mod interaction;
 pub mod layout;
+pub mod minimap;
 pub mod node;
 pub mod palette;
 pub mod port;
@@ -94,6 +95,7 @@ pub use layout::{
     apply_layout, CustomLayoutFn, ForceConfig, LayeredConfig, LayoutContext, LayoutEdge,
     LayoutNode, LayoutOrientation, LayoutStrategy,
 };
+pub use minimap::{Corner, MinimapConfig};
 pub use node::{NodeId, NodeInstance, NodeShape, NodeTemplate};
 pub use port::{
     Direction, PortAddress, PortCategory, PortDesc, PortId, PortKind, PortMetadata, PortPosition,
@@ -128,6 +130,7 @@ pub mod prelude {
     pub use crate::icon::NodeIcon;
     pub use crate::inspector::{apply_patch, fields, InspectorField, InspectorPatchRequest};
     pub use crate::layout::LayoutStrategy;
+    pub use crate::minimap::{Corner, MinimapConfig};
     pub use crate::node::{NodeId, NodeInstance, NodeShape, NodeTemplate};
     pub use crate::port::{Direction, PortAddress, PortDesc, PortId, PortKind, PortPosition};
     pub use crate::region::RegionId;

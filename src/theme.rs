@@ -429,6 +429,38 @@ impl<'a> ThemeResolver<'a> {
         self.overrides.edge_thickness.unwrap_or(2.0)
     }
 
+    // ─── Minimap chrome ──────────────────────────────────────────────
+    // The minimap is a screen-pinned overview panel. It reuses existing
+    // surface / accent tokens (no new theme override fields) and applies
+    // its own alpha at the draw site so the panel reads as a translucent
+    // overlay.
+
+    /// Panel background. `SurfaceOverlay` is the elevated translucent
+    /// surface tier used for floating chrome.
+    pub fn minimap_panel_fill(&self) -> Color {
+        Self::theme_color(ColorToken::SurfaceOverlay, Color::rgb(0.10, 0.11, 0.14))
+    }
+
+    /// Panel border + the divider around the drawn graph area.
+    pub fn minimap_panel_border(&self) -> Color {
+        Self::theme_color(ColorToken::Border, Color::rgb(0.25, 0.27, 0.32))
+    }
+
+    /// Dot colour for an unselected node in the minimap.
+    pub fn minimap_node_dot(&self) -> Color {
+        Self::theme_color(ColorToken::TextSecondary, Color::rgb(0.55, 0.58, 0.65))
+    }
+
+    /// Dot colour for a selected node + the viewport-indicator stroke.
+    pub fn minimap_accent(&self) -> Color {
+        Self::theme_color(ColorToken::Primary, Color::rgb(0.40, 0.65, 1.00))
+    }
+
+    /// Faint fill marking a group's footprint in the minimap.
+    pub fn minimap_group_fill(&self) -> Color {
+        Self::theme_color(ColorToken::SurfaceElevated, Color::rgb(0.16, 0.18, 0.22))
+    }
+
     pub fn edge_delete_button_fill(&self) -> Color {
         self.overrides
             .edge_delete_button_fill

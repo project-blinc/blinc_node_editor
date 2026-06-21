@@ -1854,3 +1854,133 @@ pub fn edge_midpoint(from: Point, to: Point) -> Point {
 fn draw_icon(ctx: &mut dyn DrawContext, icon: &crate::icon::NodeIcon, rect: Rect) {
     icon.document().render_fit(ctx, rect);
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Minimap — screen-pinned overview overlay
+// ─────────────────────────────────────────────────────────────────────
+
+/// Draw the minimap panel and return the screen-pixel rect the graph
+/// content maps into (letterboxed inside the panel). The returned rect
+/// is what the pointer handlers invert to turn a click into a world
+/// coordinate.
+///
+/// Everything is emitted under the inverse of the canvas viewport
+/// transform, so the panel and its contents draw in screen-pixel
+/// logical units regardless of pan/zoom (same trick the tooltips use).
+/// `panel` is the screen-space panel rect; `world_bbox` the graph's
+/// world AABB; `visible_world` the region the camera currently shows;
+/// `nodes` each `(world_rect, selected)`; `groups` the world group rects.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_minimap(
+    ctx: &mut dyn DrawContext,
+    panel: Rect,
+    padding: f32,
+    world_bbox: Rect,
+    visible_world: Rect,
+    nodes: &[(Rect, bool)],
+    groups: &[Rect],
+    theme: &ThemeResolver<'_>,
+    canvas_view: blinc_core::layer::Affine2D,
+) -> Rect {
+    let inverse = blinc_canvas_kit::affine_inverse(&canvas_view)
+        .unwrap_or(blinc_core::layer::Affine2D::IDENTITY);
+    ctx.push_transform(blinc_core::draw::Transform::Affine2D(inverse));
+    // Draw the panel on the FOREGROUND layer. The minimap is canvas
+    // content, but node `draw_rgba_pixels` textures composite in a late
+    // dynamic-image pass that runs above ordinary canvas SDF; the
+    // foreground layer renders AFTER that pass in every render path, so
+    // a node sitting over the panel can't paint on top of it.
+    ctx.set_foreground_layer(true);
+
+    // Panel chrome.
+    let cr = CornerRadius::uniform(8.0);
+    themed_fill_rect(
+        ctx,
+        panel,
+        cr,
+        Brush::Solid(theme.minimap_panel_fill().with_alpha(0.88)),
+        theme,
+    );
+    themed_stroke_rect(
+        ctx,
+        panel,
+        cr,
+        &Stroke::new(1.0),
+        Brush::Solid(theme.minimap_panel_border()),
+        theme,
+    );
+
+    // Fit the world bbox into the padded panel interior, preserving
+    // aspect ratio (letterbox). `scale` world-units -> screen-px.
+    let inner_w = (panel.width() - padding * 2.0).max(1.0);
+    let inner_h = (panel.height() - padding * 2.0).max(1.0);
+    let bw = world_bbox.width().max(1.0);
+    let bh = world_bbox.height().max(1.0);
+    let scale = (inner_w / bw).min(inner_h / bh);
+    let draw_w = bw * scale;
+    let draw_h = bh * scale;
+    // Centre the drawn content inside the panel interior.
+    let origin_x = panel.x() + padding + (inner_w - draw_w) * 0.5;
+    let origin_y = panel.y() + padding + (inner_h - draw_h) * 0.5;
+    let content_screen = Rect::new(origin_x, origin_y, draw_w, draw_h);
+
+    // world -> minimap-screen
+    let map = |wx: f32, wy: f32| -> (f32, f32) {
+        (
+            origin_x + (wx - world_bbox.x()) * scale,
+            origin_y + (wy - world_bbox.y()) * scale,
+        )
+    };
+
+    // Groups first (faint footprints), then node dots on top.
+    for g in groups {
+        let (x, y) = map(g.x(), g.y());
+        let r = Rect::new(x, y, (g.width() * scale).max(1.0), (g.height() * scale).max(1.0));
+        ctx.fill_rect(r, CornerRadius::uniform(2.0), Brush::Solid(theme.minimap_group_fill().with_alpha(0.6)));
+    }
+
+    let dot = theme.minimap_node_dot();
+    let accent = theme.minimap_accent();
+    for (n, selected) in nodes {
+        let (x, y) = map(n.x(), n.y());
+        // Reduced node footprint, with a small floor so a node is never
+        // sub-pixel and invisible at heavy zoom-out.
+        let w = (n.width() * scale).max(2.0);
+        let h = (n.height() * scale).max(2.0);
+        let col = if *selected { accent } else { dot };
+        ctx.fill_rect(
+            Rect::new(x, y, w, h),
+            CornerRadius::uniform(1.5),
+            Brush::Solid(col),
+        );
+    }
+
+    // Viewport indicator — the region the camera currently shows,
+    // clamped to the panel interior so a zoomed-out camera (whose
+    // visible rect dwarfs the graph) doesn't paint outside the panel.
+    let (vx0, vy0) = map(visible_world.x(), visible_world.y());
+    let (vx1, vy1) = map(
+        visible_world.x() + visible_world.width(),
+        visible_world.y() + visible_world.height(),
+    );
+    let panel_min_x = panel.x() + 1.0;
+    let panel_min_y = panel.y() + 1.0;
+    let panel_max_x = panel.x() + panel.width() - 1.0;
+    let panel_max_y = panel.y() + panel.height() - 1.0;
+    let cx0 = vx0.clamp(panel_min_x, panel_max_x);
+    let cy0 = vy0.clamp(panel_min_y, panel_max_y);
+    let cx1 = vx1.clamp(panel_min_x, panel_max_x);
+    let cy1 = vy1.clamp(panel_min_y, panel_max_y);
+    let vrect = Rect::new(cx0, cy0, (cx1 - cx0).max(2.0), (cy1 - cy0).max(2.0));
+    ctx.fill_rect(vrect, CornerRadius::uniform(2.0), Brush::Solid(accent.with_alpha(0.12)));
+    ctx.stroke_rect(
+        vrect,
+        CornerRadius::uniform(2.0),
+        &Stroke::new(1.5),
+        Brush::Solid(accent),
+    );
+
+    ctx.set_foreground_layer(false);
+    ctx.pop_transform();
+    content_screen
+}
