@@ -53,6 +53,7 @@
 pub mod bezier;
 pub mod config;
 pub mod connection;
+pub mod content_schema;
 pub mod editor;
 pub mod event;
 pub mod group;
@@ -63,6 +64,7 @@ pub mod interaction;
 pub mod layout;
 pub mod minimap;
 pub mod node;
+pub mod schema_walker;
 pub mod palette;
 pub mod port;
 pub mod region;
@@ -97,6 +99,8 @@ pub use layout::{
 };
 pub use minimap::{Corner, MinimapConfig};
 pub use node::{NodeId, NodeInstance, NodeShape, NodeTemplate};
+pub use content_schema::{walk_content, ContentItem, ContentSchema};
+pub use schema_walker::{walk_schema, EditorFieldAccess, FieldAccess, WalkOptions};
 pub use port::{
     Direction, PortAddress, PortCategory, PortDesc, PortId, PortKind, PortMetadata, PortPosition,
 };
@@ -129,9 +133,11 @@ pub mod prelude {
     pub use crate::history::{CoalesceKey, History};
     pub use crate::icon::NodeIcon;
     pub use crate::inspector::{apply_patch, fields, InspectorField, InspectorPatchRequest};
+    pub use crate::content_schema::{walk_content, ContentItem, ContentSchema, SlotRegistry};
     pub use crate::layout::LayoutStrategy;
     pub use crate::minimap::{Corner, MinimapConfig};
     pub use crate::node::{NodeId, NodeInstance, NodeShape, NodeTemplate};
+    pub use crate::schema_walker::{walk_schema, EditorFieldAccess, FieldAccess, WalkOptions};
     pub use crate::port::{Direction, PortAddress, PortDesc, PortId, PortKind, PortPosition};
     pub use crate::region::RegionId;
     pub use crate::subgraph::{Subgraph, SubgraphId};

@@ -495,6 +495,11 @@ the widget catalogue (`label`, `button`, `slider`, `switch`,
 free-form draw (sparklines, sketches, custom visualisations) +
 overlay-escape for popovers / dropdowns.
 
+The closure above is the **static** path (you write the widgets). For
+the **dynamic** path, where a host-supplied schema is composed into the
+body automatically, see
+[Schema-driven content slots](#schema-driven-content-slots-the-walker).
+
 [`blinc_portal_ui`]: ../blinc_portal_ui
 
 ## Property schema + rules engine
@@ -658,6 +663,151 @@ the touched key: the user-intent write (`from_rule=false`) then the
 rule override (`from_rule=true`). Useful for telemetry, history
 (see [History](#history)), and propagating changes into the host's
 runtime model.
+
+## Schema-driven content slots (the walker)
+
+The two sections above are independent: [content slots](#node-content-slots)
+let you hand-write a Portal-UI closure in a node body, and the
+[property schema](#property-schema--rules-engine) is a typed IR a host
+inspector can render. The **walker** joins them: it interprets a
+`ConfigSchema` (or a structured `ContentSchema`) directly into a live
+Portal-UI form *inside the node body*, two-way-bound to the node's
+`config`, with conditional interactivity driven by the rules engine.
+
+This is the dynamic path to node content: the host describes fields and
+rules as data, the walker composes the widgets. No widget code per node
+type.
+
+### Flat form: `walk_schema`
+
+Hand the walker a schema and a `FieldAccess` bridge. `EditorFieldAccess`
+is the turnkey bridge: it reads the node's `config` and writes edits
+through `patch_node_config` (so each edit runs the rule cascade and
+emits `NodeConfigChanged`).
+
+```rust
+use blinc_node_editor::prelude::*;
+
+let schema = ConfigSchema::new()
+    .with_property(NumberProperty::new("threshold", "Threshold").default(0.5).range(0.0, 1.0).step(0.01))
+    .with_property(BooleanProperty::new("strict", "Strict").default(false))
+    .with_property(SelectProperty::new("mode", "Mode").option("a", "A").option("b", "B").default("a"));
+
+// Register the template AFTER the editor exists so the content
+// closure can capture an editor handle for EditorFieldAccess.
+let editor_handle = editor.clone();
+editor.add_template(
+    NodeTemplate::new("config", "Config")
+        .with_config_schema(schema.clone())
+        .with_content_size(220.0, 200.0, move |id, ui| {
+            let mut access = EditorFieldAccess::new(editor_handle.clone(), id.clone());
+            walk_schema(ui, &schema, &mut access, &WalkOptions::default());
+        }),
+);
+```
+
+Each `PropertyDefinition` maps to a widget: `Text`/`File` to a text
+input, `Textarea`/`CodeEditor` to a textarea, `Number` to a slider
+(when it has min+max) or a numeric input, `Boolean` to a switch,
+`Select` to a cycle trigger, `Color` to a colour picker. `Custom` emits
+nothing (render it yourself via a `CustomSlot`, below). Field state is
+keyed by the property key, so caret / drag state survives across frames.
+
+`WalkOptions` toggles `show_validation` (inline issue messages from
+`validate`, glyph-prefixed since labels carry no colour) and
+`mark_required` (a `*` on required labels). The walker recomputes from
+`config` every frame, so external mutations (rule cascades, other
+clients) appear on the next paint with no reconciliation.
+
+### Custom binding: `FieldAccess`
+
+`EditorFieldAccess` covers the common case. Implement `FieldAccess`
+yourself to bind fields to anything else (a `State<Value>`, a CRDT, a
+remote document):
+
+```rust
+pub trait FieldAccess {
+    fn get(&self, key: &str) -> serde_json::Value;        // current value, Null if unset
+    fn set(&mut self, key: &str, value: serde_json::Value); // user edited `key`
+}
+```
+
+### Structured form: `walk_content` + `ContentSchema`
+
+`ConfigSchema` is a flat field list. `ContentSchema` layers structure
+over it by referencing properties by key, so the leaf vocabulary stays
+unchanged. `ContentItem` is the tree:
+
+- `Field(key)` renders one property.
+- `Section { title, children }` / `Row(children)` compose layout.
+- `When { when, children }` shows children only while a `Predicate`
+  holds; `DisableWhen { when, children }` renders them disabled. This is
+  declarative show / hide / enable, evaluated each frame against the
+  live config. It never mutates config (that is what value-cascade
+  `PropertyRule`s are for).
+- `Repeater { key }` renders an editable row per element of a string
+  array plus an add button.
+- `CustomSlot(name)` invokes a host closure registered in a
+  `SlotRegistry` — the escape hatch for charts, colour wheels, or any
+  widget the IR does not cover, composed *inside* the tree.
+- `Label(text)` / `Separator` for static structure.
+
+```rust
+let content = ContentSchema::new(schema.clone())
+    .with(ContentItem::Section {
+        title: "Validation".into(),
+        children: vec![
+            ContentItem::Field("mode".into()),
+            ContentItem::Field("threshold".into()),
+            // strict-window field shows only in strict mode
+            ContentItem::When {
+                when: Predicate::Eq { key: "mode".into(), value: JsonValue::from("strict") },
+                children: vec![ContentItem::Field("strictWindow".into())],
+            },
+        ],
+    })
+    .field("note")
+    .with(ContentItem::CustomSlot("preview".into()));
+
+let mut slots: SlotRegistry = Default::default();
+slots.insert("preview".into(), std::sync::Arc::new(|_id, ui| {
+    ui.label("● host-rendered slot");
+}));
+let slots = std::sync::Arc::new(slots);
+
+let editor_handle = editor.clone();
+editor.add_template(
+    NodeTemplate::new("config", "Config")
+        .with_config_schema(schema.clone())
+        .with_content_size(240.0, 320.0, move |id, ui| {
+            let mut access = EditorFieldAccess::new(editor_handle.clone(), id.clone());
+            walk_content(ui, &content, &mut access, id, &slots, &WalkOptions::default());
+        }),
+);
+```
+
+### How an edit flows
+
+```
+user moves the Threshold slider
+  -> walk_* sees the widget's `changed`, calls access.set("threshold", v)
+  -> EditorFieldAccess::set -> editor.patch_node_config(id, "threshold", v)
+  -> config write + cascade_rules() fires dependent rules
+  -> EditorEvent::NodeConfigChanged emitted per effect (observe via drain_events)
+  -> next frame: the walker re-reads config; the slider and any
+     cascaded field reflect the new values
+```
+
+Intra-form conditionals (`When` / `DisableWhen`) need no reactive graph:
+the walker reads live values each frame. Cross-node reactivity rides
+`graph_signal` as usual.
+
+### Current limits
+
+`Select` is a self-contained click-to-cycle trigger for now (a popover
+picker is the planned upgrade). `Repeater` handles scalar string arrays
+only; subform-per-row repeaters need path-scoped binding and are a
+future extension.
 
 ## Frustum cull
 

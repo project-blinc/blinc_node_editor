@@ -365,36 +365,39 @@ Once a node's position + state is unchanged across frames, its primitive sub-seq
 
 ---
 
-## Tier 11 — Metadata-driven node content slots (Zeal parity)
+## Tier 11 — Metadata-driven node content slots (Portal-UI IR, Zeal parity)
 
-Zeal nodes embed real widgets inside the node body — code editors, dropdowns, number inputs, color pickers, rules tables — driven by per-template metadata. Our nodes currently render only header chrome; this tier adds the equivalent surface so a `cn::code_editor` / `cn::input` / `cn::select` lives inside each node, sized to its content. Unblocks IIP defaults + inline editing + custom-widget node types.
+Zeal embeds real widgets inside the node body (inputs, dropdowns, code editors, color pickers, rules tables) driven by per-template metadata, composed from web components. Blinc's equivalent substrate is **Portal UI**: the immediate-mode widget toolkit that already paints inside each node's content slot. This tier turns a host-supplied schema into an intermediate representation that the editor walks into a fully-working Portal-UI form, bound to the node's data, with dynamic interactivity (conditional show / hide / enable, computed values, validation) driven by Blinc's signal system.
 
-### 11.1 `NodeTemplate.content` — two surfaces
+> Reframed 2026-06-21. The original spec predated Portal UI and proposed `cn::*` widgets mounted in an absolutely-positioned layout-subtree-per-node with viewport-transform bridging. That path is dropped. Portal UI renders inside the canvas content slot already (the per-node `Portal` keyed by `NodeId` is shipped), so there is no per-node layout subtree and no CSS-transform bridge. The substrate is Portal UI + signals, not cn + DOM-style layout.
 
-**Static (compile-time, Rust-typed)**: `NodeTemplate.content_render: Option<Arc<dyn Fn(&NodeInstance<M>, &EditorContext) -> Box<dyn ElementBuilder> + Send + Sync>>`. Hosts hand in a closure that builds Blinc elements. Most flexible; the natural fit for nan8's reflow-typed actor templates.
+### 11.1 Two authoring surfaces
 
-**Dynamic (runtime, JSON/DSL)**: `NodeTemplate.content_schema: Option<ContentSchema>` where `ContentSchema = Vec<ContentItem>` and `ContentItem` enums the supported widgets (`Text`, `Input { kind, label, default }`, `Select { options }`, `CodeEditor { language }`, `ColorPicker`, `Custom(serde_json::Value)`). The renderer interprets the schema and emits the matching `cn::*` widget bound to the node's `metadata.extra[field]`.
+Both render through the per-node Portal frame the content slot already hosts (`NodeContent` + a `PortalManager` keyed by `NodeId`).
 
-### 11.2 Embedding architecture
+- **Static (Rust closure) — shipped.** `NodeContent.render(&NodeId, &mut PortalUi)` drives Portal UI directly. Full control; the natural fit for typed host templates. Already exercised in the demo (sink-node notes textarea, file picker, telemetry charts).
+- **Dynamic (schema / IR) — this tier.** A host-supplied schema (the typed IR already in `config.rs`: `ConfigSchema` of `PropertyDefinition` variants + `PropertyMeta` + `PropertyRule`) is walked into Portal UI by a schema-to-portal walker. The host describes fields and rules as data; it writes no widget code.
 
-Our nodes currently render inside a single canvas closure (primitives only, no layout tree). Embedding requires per-node layout subtrees:
+### 11.2 The IR → Portal-UI walker (the core of the tier)
 
-* **Layout-subtree-per-node** (preferred): each node becomes a `Stateful` Div positioned absolutely over the canvas (or wrapped in a custom widget that pans/zooms with the viewport transform). Edges + groups stay in the canvas. The bridge code translates `kit.viewport()` → CSS transform on the node wrapper so nodes pan / zoom with the canvas content.
-* **Render-into-canvas adapter**: a `CanvasEmbed` widget rasterises a sub-tree to primitives each frame. More invasive; loses event routing for the embedded widget.
+The walker takes a `ConfigSchema` plus a per-field value accessor and composes the form each frame inside the content closure. Immediate mode: recompose every frame, no retained widget tree, so rule evaluation is just reading the current field values.
 
-The first is the right path.
+- Each `PropertyDefinition` variant maps to a Portal widget: Text → `text_input`, Textarea → `textarea`, Number → `numeric_input` / `slider`, Boolean → `switch`, Select → `select`, Color → `color_picker`, File → `file_picker`, CodeEditor → a code surface.
+- Layout composes through Portal UI's `vertical` / `horizontal` / `group` / `indent`; labels come from `PropertyMeta`. Field id stability via `push_id(field_key)` so dynamically generated widgets keep their state across frames.
+- `PropertyRule` (a `Predicate` over current field values producing a `PropertyEffect`) recomputes every frame: Hide skips the widget, Disable renders it disabled, SetValue patches the bound value. This is the interactivity Zeal gets from imperative web-component code, expressed declaratively.
+- `validate` surfaces `ValidationIssue`s inline (per-field message + severity tint).
 
-### 11.3 Implementation order
+### 11.3 Signal binding
 
-1. Refactor `NodeEditor::element()` to mount each node as an absolutely-positioned `Stateful` div above the canvas (canvas keeps edges + groups + ports). Pan/zoom plumbing.
-2. Header chrome moves to that div (icon + title + subtitle + status badge); body stays empty for now.
-3. Add `NodeTemplate.content_render` (static path) + render its output inside the body.
-4. Add `ContentSchema` + renderer mapping (dynamic path).
-5. Wire IIP defaults: `PortMetadata.iip_default` becomes an inline `cn::input` next to the port.
+Field values are the bridge between the walker and the host model. Each field two-way-binds to state keyed by `(node_id, field_key)`; an edit writes the value, bumps the node's signal, and emits an editor event (Tier 6.4) so the host persists it. Intra-form conditionals need no separate reactive graph (the walker reads live values each frame); cross-node reactivity rides the existing `graph_signal`. The leverage is the combination: the form is data, the data is signals, edits flow back through the event channel.
 
-### 11.4 Sizing
+### 11.4 IR extensions for composability
 
-Each node sizes to `max(intrinsic_content + header, instance.size)`. Drop the empty-body dead space currently visible when `instance.size` exceeds intrinsic — until content slots land, body height = header height.
+`PropertyDefinition` today is a flat field list. Zeal parity needs nesting, added incrementally and layered over `ConfigSchema` so the flat case stays trivial: sections / groups, horizontal rows, repeaters (list-of-subform for rules tables), conditional groups, and a custom-slot escape hatch (a host closure for a sub-region). Portal UI's composition primitives already support the rendering; the IR just needs the container variants.
+
+### 11.5 Sizing
+
+Each node sizes to `max(intrinsic content + header, instance.size)`. The content slot already feeds consumed Portal height / width back to node layout; the walker's emitted form drives that measurement, dropping the empty-body dead space.
 
 ---
 
@@ -437,12 +440,13 @@ Field stores atlas pixel coords now, not UVs. Misleading name. (Upstream `blinc_
 17. ~~Tier 4.5~~ context menu (node / edge / group / canvas) via `ContextMenuRequested` + demo `cn::context_menu` ✓
 18. ~~Tier 1.3~~ subgraph nav (`SubgraphRef` + diamond chrome + `SubgraphRequested` event + demo expand-into-wrapper save flow) ✓
 19. ~~Tier 5.2~~ force-directed layout (Hooke + Coulomb, deterministic, demo-wired via canvas context menu) ✓
+20. ~~Tier 11~~ schema → Portal-UI walker ✓ — `ConfigSchema`/`ContentSchema` walked into a live, signal-bound node-body form (`walk_schema` / `walk_content`, `FieldAccess` / `EditorFieldAccess`); validation, rule cascades, conditional show/hide/disable (`When`/`DisableWhen`), `Repeater`, `CustomSlot`/`SlotRegistry`; select fields open an editor-core screen-space overlay menu. See README "Schema-driven content slots".
 
 **Next:**
 
 1. **Tier 2.1** (typed `PropertyDefinition`) — hosts can already implement inspectors with the opaque-JSON model; formalised schema is an ergonomics upgrade, not a blocker.
 2. **Tier 5.1** (layered Sugiyama layout) — the second `unimplemented!()` stub. Multi-pass: cycle break → longest-path layering → median in-layer ordering → Brandes-Köpfe coordinate assignment.
-3. **Tier 11.x** (portal-UI content slots polish) — partly done; close out remaining subitems.
+3. **Tier 11 polish** — subform `Repeater`s (path-scoped binding), a built-in code-editor `CustomSlot`, and per-row remove on repeaters.
 5. **Tier 3.1 + 3.2** (group timestamps + relative member positions) — small data-model adds.
 6. **Tier 7.3** (trace event ribbon) — flash-node already shipped; ribbon is host-side polish.
 7. **Tier 9.2–9.4** (LOD / edge bundling / static-cache) — only when a real graph saturates the existing pipeline.

@@ -141,6 +141,18 @@ pub(crate) struct ViewportAnimation {
     pub duration_ms: f32,
 }
 
+/// A deferred request to open a select-field dropdown overlay, queued by
+/// the schema walker and drained at the top of the next `render_frame`.
+pub(crate) struct SelectOverlayRequest {
+    pub node: NodeId,
+    pub key: String,
+    /// `(value, label)` pairs.
+    pub options: Vec<(String, String)>,
+    /// The trigger's rect in canvas-content space; converted to screen
+    /// at open time to anchor the overlay.
+    pub anchor_content: Rect,
+}
+
 /// One result returned by [`NodeEditor::search`] — either a node in
 /// the active graph or a group on the active canvas. Subgraph
 /// matches are projected by `search` onto the diamond
@@ -274,6 +286,19 @@ pub struct NodeEditor<K: PortKind, N, C, G> {
     events_rev: State<u64>,
     /// Pending events; drained by [`drain_events`](Self::drain_events).
     events_queue: Arc<Mutex<Vec<EditorEvent<K>>>>,
+    /// Config patches queued by the schema walker's `FieldAccess` while
+    /// it runs INSIDE the content closure (during `render_frame`, which
+    /// holds a `graph.read()` lock). Applying them there would re-enter
+    /// `graph.write()` and deadlock; instead they're drained at the top
+    /// of the NEXT `render_frame`, before the read lock is taken.
+    pending_config_patches: Arc<Mutex<Vec<(NodeId, String, serde_json::Value)>>>,
+    /// Select-field dropdowns requested by the schema walker (a select
+    /// trigger was clicked). Queued during the content closure and
+    /// drained at the top of the next `render_frame`, where the editor
+    /// opens a screen-space overlay menu (NOT a canvas draw) listing
+    /// the options. Deferred for the same reason as config patches:
+    /// the walker runs under the graph read lock.
+    pending_select_overlays: Arc<Mutex<Vec<SelectOverlayRequest>>>,
     /// Active flashes keyed by node id (see `flash_node`).
     flashes: Arc<RwLock<AHashMap<NodeId, NodeFlash>>>,
 
@@ -480,6 +505,8 @@ impl<K: PortKind, N, C, G> Clone for NodeEditor<K, N, C, G> {
             hover_state: self.hover_state.clone(),
             events_rev: self.events_rev.clone(),
             events_queue: self.events_queue.clone(),
+            pending_config_patches: self.pending_config_patches.clone(),
+            pending_select_overlays: self.pending_select_overlays.clone(),
             flashes: self.flashes.clone(),
             last_group_auto_bounds: self.last_group_auto_bounds.clone(),
             drag_group_preview: self.drag_group_preview.clone(),
@@ -714,6 +741,8 @@ where
                 .use_state_keyed::<Option<HoverTarget>, _>(&format!("{key}_ne_hover"), || None),
             events_rev,
             events_queue,
+            pending_config_patches: Arc::new(Mutex::new(Vec::new())),
+            pending_select_overlays: Arc::new(Mutex::new(Vec::new())),
             flashes: Arc::new(RwLock::new(AHashMap::new())),
             last_group_auto_bounds: Arc::new(RwLock::new(AHashMap::new())),
             drag_group_preview: Arc::new(RwLock::new(DragGroupPreview::default())),
@@ -1309,6 +1338,255 @@ where
     /// * The node id isn't present in the graph.
     /// * The new value equals the existing value AND no rule
     ///   cascades fire.
+    /// Read-back of a node's current `config` object (the free-form
+    /// JSON the `config_schema` is bound against). `None` when the id
+    /// isn't in the graph. Clones the value out under a short graph
+    /// read lock — used by the schema walker's `FieldAccess` bridge.
+    pub fn node_config(&self, id: &NodeId) -> Option<serde_json::Value> {
+        self.graph
+            .read()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|n| n.id == *id)
+            .map(|n| n.config.clone())
+    }
+
+    /// Queue a config patch for deferred application. Use this (not
+    /// [`patch_node_config`](Self::patch_node_config)) from code that
+    /// runs inside `render_frame` — most notably the schema walker's
+    /// `FieldAccess`, which executes inside the node content closure
+    /// while the graph read lock is held. The queue is drained at the
+    /// top of the next `render_frame`, before that lock is taken, so
+    /// the write can't re-enter the lock. One-frame deferral.
+    pub fn queue_config_patch(&self, id: &NodeId, key: &str, value: serde_json::Value) {
+        self.pending_config_patches
+            .lock()
+            .unwrap()
+            .push((id.clone(), key.to_string(), value));
+        // Ensure a next frame happens so the queue drains (a plain
+        // click otherwise wouldn't schedule one).
+        blinc_layout::request_redraw();
+    }
+
+    /// Apply + clear queued config patches. Called at the top of
+    /// `render_frame` before any graph lock is acquired. Each patch
+    /// runs the full `patch_node_config` path (cascade + events).
+    fn drain_pending_config_patches(&self) {
+        let pending: Vec<(NodeId, String, serde_json::Value)> =
+            std::mem::take(&mut *self.pending_config_patches.lock().unwrap());
+        for (id, key, value) in pending {
+            self.patch_node_config(&id, &key, value);
+        }
+    }
+
+    /// Queue a select-field dropdown to open (the schema walker's select
+    /// trigger was clicked). Deferred like config patches: drained at
+    /// the top of the next `render_frame`, where the editor opens a
+    /// screen-space overlay menu via [`Self::open_select_overlay`].
+    pub fn queue_select_overlay(
+        &self,
+        node: &NodeId,
+        key: &str,
+        options: Vec<(String, String)>,
+        anchor_content: Rect,
+    ) {
+        self.pending_select_overlays
+            .lock()
+            .unwrap()
+            .push(SelectOverlayRequest {
+                node: node.clone(),
+                key: key.to_string(),
+                options,
+                anchor_content,
+            });
+        blinc_layout::request_redraw();
+    }
+
+    /// Drain + open queued select dropdowns. Called at the top of
+    /// `render_frame`, outside the graph lock and the content closure.
+    fn drain_pending_select_overlays(&self) {
+        let pending: Vec<SelectOverlayRequest> =
+            std::mem::take(&mut *self.pending_select_overlays.lock().unwrap());
+        for req in pending {
+            self.open_select_overlay(req);
+        }
+    }
+
+    /// Open a screen-space dropdown overlay listing a select field's
+    /// options, anchored under the trigger. Picking an option patches
+    /// the node config and dismisses. This is the editor-core
+    /// realisation of the select widget's "trigger -> overlay" contract:
+    /// the menu is a `blinc_layout` overlay (NOT a canvas draw), so it
+    /// floats above all canvas content and routes pointer events
+    /// normally.
+    fn open_select_overlay(&self, req: SelectOverlayRequest) {
+        use blinc_core::context_state::BlincContextState;
+        use blinc_layout::click_outside;
+        use blinc_layout::overlay_state::overlay_stack;
+        use blinc_layout::widgets::overlay::AnchorDirection;
+        use blinc_layout::widgets::overlay_stack::{OverlayBuilder, OverlayHandle};
+        use blinc_theme::ColorToken;
+
+        let (sw, sh) = self.kit.screen_bounds();
+        if sw <= 0.0 || sh <= 0.0 {
+            return;
+        }
+        // Trigger rect in screen space → anchor the menu just below it.
+        let a = req.anchor_content;
+        let tl = self.kit.content_to_screen(Point::new(a.x(), a.y()));
+        let br = self
+            .kit
+            .content_to_screen(Point::new(a.x() + a.width(), a.y() + a.height()));
+        let place_x = tl.x.min(br.x);
+        let place_y = tl.y.max(br.y) + 4.0;
+        let menu_w = (br.x - tl.x).abs().max(160.0);
+
+        let next_id = overlay_stack()
+            .lock()
+            .ok()
+            .map(|s| s.peek_next_handle_id())
+            .unwrap_or(0);
+        let wrapper_id = format!("ne-select-menu-{next_id}");
+        let dismiss_key = format!("ne-select-dismiss-{next_id}");
+
+        // Current value drives the "selected" row highlight (read now,
+        // outside the graph lock — this runs at render_frame top).
+        let current = self
+            .node_config(&req.node)
+            .and_then(|c| c.get(&req.key).and_then(|v| v.as_str().map(String::from)))
+            .unwrap_or_default();
+
+        // Dismiss on click-outside. The canvas consumes raw pointer
+        // events, so the overlay's own on_click_outside never sees a
+        // canvas click — register the global click-outside hook the way
+        // cn does, hit-testing against the menu's wrapper id.
+        {
+            let dk = dismiss_key.clone();
+            click_outside::register_click_outside(&dismiss_key, &wrapper_id, move || {
+                if let Ok(mut s) = overlay_stack().lock() {
+                    s.close(OverlayHandle::from_raw(next_id));
+                }
+                click_outside::unregister_click_outside(&dk);
+                blinc_layout::request_redraw();
+            });
+        }
+
+        let editor = self.clone();
+        let node = req.node.clone();
+        let key = req.key.clone();
+        let options = req.options.clone();
+        let row_h = 30.0_f32;
+        let est_h = (options.len() as f32 * (row_h + 2.0) + 10.0).clamp(row_h, 360.0);
+        let dismiss_key_on_close = dismiss_key.clone();
+
+        // Palette resolved once at open time; Color is Copy, so these
+        // are captured into the content closure by value.
+        let theme = blinc_theme::ThemeState::get();
+        let panel_bg = theme.color(ColorToken::SurfaceElevated);
+        let border = theme.color(ColorToken::Border);
+        let fg = theme.color(ColorToken::TextPrimary);
+        let accent = theme.color(ColorToken::Primary);
+        let hover_bg = accent.with_alpha(0.16);
+        let selected_bg = accent.with_alpha(0.26);
+        let transparent = blinc_core::layer::Color::rgba(0.0, 0.0, 0.0, 0.0);
+
+        // One signal-bound bg State per row, keyed STABLY by
+        // node+key+index so repeated opens reuse the same handles rather
+        // than minting fresh signals every open (the keyed-state store
+        // has no GC path — unstable keys leak unboundedly). The content
+        // closure is an `Fn` that re-runs on subtree rebuilds, so the
+        // base colour is seeded HERE, once per open, outside the closure
+        // — re-seeding inside it would clobber an active hover on a
+        // mid-open rebuild.
+        let row_states: Vec<_> = options
+            .iter()
+            .enumerate()
+            .map(|(idx, (value, _))| {
+                let base = if *value == current {
+                    selected_bg
+                } else {
+                    transparent
+                };
+                let bg_key = format!("ne-sel-bg-{}-{}-{}", node.as_str(), key, idx);
+                let s = BlincContextState::get().use_state_keyed(&bg_key, move || base);
+                s.set(base);
+                s
+            })
+            .collect();
+
+        OverlayBuilder::popover()
+            .at(place_x, place_y)
+            .size(menu_w, est_h)
+            .anchor_direction(AnchorDirection::Bottom)
+            .on_close(move |_reason| {
+                click_outside::unregister_click_outside(&dismiss_key_on_close);
+            })
+            .content(move || {
+                let mut menu = blinc_layout::div()
+                    .id(&wrapper_id)
+                    .flex_col()
+                    .gap_px(2.0)
+                    .bg(panel_bg)
+                    .border(1.0, border)
+                    .rounded(8.0)
+                    .lock_corner_shape()
+                    .shadow_lg()
+                    .p_px(4.0)
+                    .min_w(menu_w);
+
+                for (idx, (value, label)) in options.iter().enumerate() {
+                    let base_bg = if *value == current { selected_bg } else { transparent };
+                    // bg bound as a signal: hover patches the Background
+                    // property channel in place via the binding registry
+                    // — no closure re-run, no subtree rebuild (see book:
+                    // Reactive Property Bindings).
+                    let row_bg = row_states[idx].clone();
+
+                    let editor = editor.clone();
+                    let node = node.clone();
+                    let key = key.clone();
+                    let value = value.clone();
+                    let bg_enter = row_bg.clone();
+                    let bg_leave = row_bg.clone();
+                    let row = blinc_layout::div()
+                        .w_full()
+                        .h(row_h)
+                        .px(2.0)
+                        .items_center()
+                        .rounded(6.0)
+                        .bg(&row_bg)
+                        .cursor(blinc_layout::CursorStyle::Pointer)
+                        .child(
+                            blinc_layout::div().px(2.0).child(
+                                blinc_layout::text(label.clone())
+                                    .size(13.0)
+                                    .no_cursor()
+                                    .color(fg),
+                            ),
+                        )
+                        .on_hover_enter(move |_| bg_enter.set(hover_bg))
+                        .on_hover_leave(move |_| bg_leave.set(base_bg))
+                        .on_click(move |_evt| {
+                            // Event dispatch (outside render_frame), so a
+                            // direct write is safe.
+                            editor.patch_node_config(
+                                &node,
+                                &key,
+                                serde_json::Value::String(value.clone()),
+                            );
+                            if let Ok(mut s) = overlay_stack().lock() {
+                                s.close(OverlayHandle::from_raw(next_id));
+                            }
+                            blinc_layout::request_redraw();
+                        });
+                    menu = menu.child(row);
+                }
+                menu
+            })
+            .show();
+    }
+
     pub fn patch_node_config(
         &self,
         id: &NodeId,
@@ -3694,6 +3972,14 @@ where
     /// canvas surface (overlay editor, embedded preview) can call it
     /// from their own draw closure.
     pub fn render_frame(&self, ctx: &mut dyn DrawContext) {
+        // Apply config edits queued by last frame's content closures
+        // (schema walker) BEFORE taking the graph read lock below —
+        // patch_node_config takes graph.write() and would deadlock if
+        // run inside the content closure under the read lock.
+        self.drain_pending_config_patches();
+        // Open any select dropdowns requested last frame (screen-space
+        // overlay, outside the graph lock taken by begin_frame below).
+        self.drain_pending_select_overlays();
         let frame = self.begin_frame();
         let theme = ThemeResolver::new(&frame.theme_overrides);
 

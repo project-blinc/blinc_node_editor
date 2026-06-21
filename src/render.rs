@@ -613,7 +613,7 @@ fn draw_node_title<M>(
     instance: &NodeInstance<M>,
     slots: &crate::slot::NodeSlots,
     origin: Point,
-    bounds: Rect,
+    _bounds: Rect,
     header_y_shift: f32,
     theme: &ThemeResolver<'_>,
 ) {
@@ -668,7 +668,16 @@ fn draw_node_title<M>(
             let icon_rect = translate_rect(icon_slot, origin);
             icon_rect.y() + header_y_shift + icon_rect.height() * 0.5
         } else {
-            bounds.y() + bounds.height() * 0.5
+            // Centre against the fixed-height HEADER band, not the full
+            // node bounds — otherwise the title drifts downward as a
+            // content body grows the node. `header_y_shift` is 0 for
+            // content nodes (so the title pins to the top header) and
+            // carries the centring offset for content-less nodes that
+            // grew past their natural header, keeping that case
+            // unchanged (header_top + shift + header_h/2 == bounds
+            // centre when shift centres the header).
+            let header_rect = translate_rect(slots.header, origin);
+            header_rect.y() + header_y_shift + header_rect.height() * 0.5
         };
         ctx.draw_text(title, Point::new(title_rect.x(), centre_y), &title_style);
     }
