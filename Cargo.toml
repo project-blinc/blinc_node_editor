@@ -34,21 +34,21 @@ crate-type = ["lib"]
 # This crate's own [patch] block below is for source-local-to-Blinc
 # development only (see DIRECTIVE.md §8); ignore it when consuming the
 # crate from outside the Blinc tree.
-blinc_core   = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b8e949d40a0012612b5880e89934ef69de" }
+blinc_core   = { git = "https://github.com/project-blinc/Blinc.git", rev = "469e9e556a7b4eb8b9e68f9392a131e823889d36" }
 # Pull `TickCallbackId` for the viewport-tween scheduler hook.
 # blinc_layout already re-exports SchedulerHandle / Easing, but not
 # the slotmap-typed callback id, so we depend on blinc_animation
 # directly. Same git rev as the other Blinc upstreams keeps the
 # downstream dep graph unified.
-blinc_animation = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b8e949d40a0012612b5880e89934ef69de" }
-blinc_layout = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b8e949d40a0012612b5880e89934ef69de" }
-blinc_theme  = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b8e949d40a0012612b5880e89934ef69de" }
+blinc_animation = { git = "https://github.com/project-blinc/Blinc.git", rev = "469e9e556a7b4eb8b9e68f9392a131e823889d36" }
+blinc_layout = { git = "https://github.com/project-blinc/Blinc.git", rev = "469e9e556a7b4eb8b9e68f9392a131e823889d36" }
+blinc_theme  = { git = "https://github.com/project-blinc/Blinc.git", rev = "469e9e556a7b4eb8b9e68f9392a131e823889d36" }
 # SVG parser + path renderer. Used by `NodeIcon` so hosts can ship
 # any SVG (tabler, lucide, custom) and have the editor draw it in
 # the node header via `SvgDocument::render_fit`. Works inside
 # canvas closures because it uses `fill_path` / `stroke_path` —
 # unlike the in-canvas `draw_text` path which is currently broken.
-blinc_svg    = { git = "https://github.com/project-blinc/Blinc.git", rev = "aa5ed9b8e949d40a0012612b5880e89934ef69de" }
+blinc_svg    = { git = "https://github.com/project-blinc/Blinc.git", rev = "469e9e556a7b4eb8b9e68f9392a131e823889d36" }
 
 # The canvas substrate this crate is layered on. Lives in its own
 # repo (`github.com/project-blinc/blinc_canvas_kit`); the [patch]
