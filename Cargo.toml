@@ -95,7 +95,7 @@ rayon = "1"
 # match blinc_layout's exact version — without this match,
 # LayoutTree::create_node would reject our `Style` as the wrong
 # taffy version.
-taffy = "0.6"
+taffy = "0.14"
 
 # Force-pin wgpu-hal to 26.0.5 to match the Blinc workspace's pin —
 # blinc_gpu's `wgpu-hal = "=26.0.5"` would otherwise conflict with

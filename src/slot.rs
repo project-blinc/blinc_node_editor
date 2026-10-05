@@ -344,8 +344,8 @@ pub fn compute_node_slots(inputs: &NodeSlotInputs) -> NodeSlots {
     let root = tree.create_node(Style {
         flex_direction: FlexDirection::Column,
         size: TaffySize {
-            width: Dimension::Length(inputs.width),
-            height: Dimension::Auto,
+            width: Dimension::length(inputs.width),
+            height: Dimension::auto(),
         },
         ..Default::default()
     });
@@ -358,17 +358,17 @@ pub fn compute_node_slots(inputs: &NodeSlotInputs) -> NodeSlots {
     let header = tree.create_node(Style {
         flex_direction: FlexDirection::Row,
         size: TaffySize {
-            width: Dimension::Percent(1.0),
-            height: Dimension::Auto,
+            width: Dimension::percent(1.0),
+            height: Dimension::auto(),
         },
         flex_shrink: 0.0,
         padding: TaffyRect {
-            left: LengthPercentage::Length(pad),
-            right: LengthPercentage::Length(pad),
-            top: LengthPercentage::Length(header_pad_top),
-            bottom: LengthPercentage::Length(header_pad_bottom),
+            left: LengthPercentage::length(pad),
+            right: LengthPercentage::length(pad),
+            top: LengthPercentage::length(header_pad_top),
+            bottom: LengthPercentage::length(header_pad_bottom),
         },
-        align_items: Some(taffy::AlignItems::FlexStart),
+        align_items: Some(taffy::AlignItems::FLEX_START),
         ..Default::default()
     });
 
@@ -382,14 +382,14 @@ pub fn compute_node_slots(inputs: &NodeSlotInputs) -> NodeSlots {
         let icon_render_size = inputs.icon_size;
         let n = tree.create_node(Style {
             size: TaffySize {
-                width: Dimension::Length(icon_render_size),
-                height: Dimension::Length(icon_render_size),
+                width: Dimension::length(icon_render_size),
+                height: Dimension::length(icon_render_size),
             },
             margin: TaffyRect {
-                right: LengthPercentageAuto::Length(12.0),
-                left: LengthPercentageAuto::Length(0.0),
-                top: LengthPercentageAuto::Length(0.0),
-                bottom: LengthPercentageAuto::Length(0.0),
+                right: LengthPercentageAuto::length(12.0),
+                left: LengthPercentageAuto::length(0.0),
+                top: LengthPercentageAuto::length(0.0),
+                bottom: LengthPercentageAuto::length(0.0),
             },
             ..Default::default()
         });
@@ -408,8 +408,8 @@ pub fn compute_node_slots(inputs: &NodeSlotInputs) -> NodeSlots {
 
     let title_node = tree.create_node(Style {
         size: TaffySize {
-            width: Dimension::Auto,
-            height: Dimension::Length(title_line),
+            width: Dimension::auto(),
+            height: Dimension::length(title_line),
         },
         ..Default::default()
     });
@@ -418,14 +418,14 @@ pub fn compute_node_slots(inputs: &NodeSlotInputs) -> NodeSlots {
     let subtitle_node = if inputs.has_subtitle {
         let n = tree.create_node(Style {
             size: TaffySize {
-                width: Dimension::Auto,
-                height: Dimension::Length(subtitle_line),
+                width: Dimension::auto(),
+                height: Dimension::length(subtitle_line),
             },
             margin: TaffyRect {
-                top: LengthPercentageAuto::Length(title_subtitle_gap),
-                right: LengthPercentageAuto::Length(0.0),
-                bottom: LengthPercentageAuto::Length(0.0),
-                left: LengthPercentageAuto::Length(0.0),
+                top: LengthPercentageAuto::length(title_subtitle_gap),
+                right: LengthPercentageAuto::length(0.0),
+                bottom: LengthPercentageAuto::length(0.0),
+                left: LengthPercentageAuto::length(0.0),
             },
             ..Default::default()
         });
@@ -444,14 +444,14 @@ pub fn compute_node_slots(inputs: &NodeSlotInputs) -> NodeSlots {
         let badge_top_offset = ((title_line - badge_size) * 0.5).max(0.0);
         let n = tree.create_node(Style {
             size: TaffySize {
-                width: Dimension::Length(badge_size),
-                height: Dimension::Length(badge_size),
+                width: Dimension::length(badge_size),
+                height: Dimension::length(badge_size),
             },
             margin: TaffyRect {
-                left: LengthPercentageAuto::Length(8.0),
-                top: LengthPercentageAuto::Length(badge_top_offset),
-                right: LengthPercentageAuto::Length(0.0),
-                bottom: LengthPercentageAuto::Length(0.0),
+                left: LengthPercentageAuto::length(8.0),
+                top: LengthPercentageAuto::length(badge_top_offset),
+                right: LengthPercentageAuto::length(0.0),
+                bottom: LengthPercentageAuto::length(0.0),
             },
             ..Default::default()
         });
@@ -469,13 +469,13 @@ pub fn compute_node_slots(inputs: &NodeSlotInputs) -> NodeSlots {
     // `node_bounds` / port placement / effective-bounds growth
     // all see the right total.
     let body_height = if inputs.content_height > 0.0 {
-        Dimension::Length(inputs.content_height)
+        Dimension::length(inputs.content_height)
     } else {
-        Dimension::Auto
+        Dimension::auto()
     };
     let body = tree.create_node(Style {
         size: TaffySize {
-            width: Dimension::Percent(1.0),
+            width: Dimension::percent(1.0),
             height: body_height,
         },
         ..Default::default()
@@ -529,16 +529,16 @@ pub fn compute_group_slots(inputs: &GroupSlotInputs) -> GroupSlots {
     let header = tree.create_node(Style {
         flex_direction: FlexDirection::Row,
         size: TaffySize {
-            width: Dimension::Length(inputs.width),
-            height: Dimension::Auto,
+            width: Dimension::length(inputs.width),
+            height: Dimension::auto(),
         },
         padding: TaffyRect {
-            left: LengthPercentage::Length(pad),
-            right: LengthPercentage::Length(pad),
-            top: LengthPercentage::Length(header_pad_top),
-            bottom: LengthPercentage::Length(header_pad_bottom),
+            left: LengthPercentage::length(pad),
+            right: LengthPercentage::length(pad),
+            top: LengthPercentage::length(header_pad_top),
+            bottom: LengthPercentage::length(header_pad_bottom),
         },
-        align_items: Some(taffy::AlignItems::FlexStart),
+        align_items: Some(taffy::AlignItems::FLEX_START),
         ..Default::default()
     });
 
@@ -550,8 +550,8 @@ pub fn compute_group_slots(inputs: &GroupSlotInputs) -> GroupSlots {
 
     let title = tree.create_node(Style {
         size: TaffySize {
-            width: Dimension::Auto,
-            height: Dimension::Length(title_line),
+            width: Dimension::auto(),
+            height: Dimension::length(title_line),
         },
         ..Default::default()
     });
@@ -561,14 +561,14 @@ pub fn compute_group_slots(inputs: &GroupSlotInputs) -> GroupSlots {
         let line_count = inputs.description_lines.max(1) as f32;
         let n = tree.create_node(Style {
             size: TaffySize {
-                width: Dimension::Auto,
-                height: Dimension::Length(description_line * line_count),
+                width: Dimension::auto(),
+                height: Dimension::length(description_line * line_count),
             },
             margin: TaffyRect {
-                top: LengthPercentageAuto::Length(title_description_gap),
-                right: LengthPercentageAuto::Length(0.0),
-                bottom: LengthPercentageAuto::Length(0.0),
-                left: LengthPercentageAuto::Length(0.0),
+                top: LengthPercentageAuto::length(title_description_gap),
+                right: LengthPercentageAuto::length(0.0),
+                bottom: LengthPercentageAuto::length(0.0),
+                left: LengthPercentageAuto::length(0.0),
             },
             ..Default::default()
         });
@@ -587,14 +587,14 @@ pub fn compute_group_slots(inputs: &GroupSlotInputs) -> GroupSlots {
         let badge_top_offset = ((title_line - badge_size) * 0.5).max(0.0);
         let n = tree.create_node(Style {
             size: TaffySize {
-                width: Dimension::Length(badge_size),
-                height: Dimension::Length(badge_size),
+                width: Dimension::length(badge_size),
+                height: Dimension::length(badge_size),
             },
             margin: TaffyRect {
-                left: LengthPercentageAuto::Length(8.0),
-                top: LengthPercentageAuto::Length(badge_top_offset),
-                right: LengthPercentageAuto::Length(0.0),
-                bottom: LengthPercentageAuto::Length(0.0),
+                left: LengthPercentageAuto::length(8.0),
+                top: LengthPercentageAuto::length(badge_top_offset),
+                right: LengthPercentageAuto::length(0.0),
+                bottom: LengthPercentageAuto::length(0.0),
             },
             ..Default::default()
         });
@@ -618,14 +618,14 @@ pub fn compute_group_slots(inputs: &GroupSlotInputs) -> GroupSlots {
     let make_chrome = |tree: &mut LayoutTree, left_margin: f32| {
         tree.create_node(Style {
             size: TaffySize {
-                width: Dimension::Length(chrome_size),
-                height: Dimension::Length(chrome_size),
+                width: Dimension::length(chrome_size),
+                height: Dimension::length(chrome_size),
             },
             margin: TaffyRect {
-                left: LengthPercentageAuto::Length(left_margin),
-                top: LengthPercentageAuto::Length(chrome_top_offset),
-                right: LengthPercentageAuto::Length(0.0),
-                bottom: LengthPercentageAuto::Length(0.0),
+                left: LengthPercentageAuto::length(left_margin),
+                top: LengthPercentageAuto::length(chrome_top_offset),
+                right: LengthPercentageAuto::length(0.0),
+                bottom: LengthPercentageAuto::length(0.0),
             },
             ..Default::default()
         })
